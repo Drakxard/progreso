@@ -1,5 +1,5 @@
 # Fork of Html theory requirement
-v0-fork-of-html-theory-requirement-hxx54okg5.vercel.app
+
 *Automatically synced with your [v0.app](https://v0.app) deployments*
 
 [![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/ovh6581-4224s-projects/v0-fork-of-html-theory-requirement)
