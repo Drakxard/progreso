@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ChevronLeft, ChevronRight, Flame, Sun, TreePine } from "lucide-react"
+import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, Settings } from "lucide-react"
 
 interface TaskItem {
   id: string
@@ -34,6 +34,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [showAverageLine, setShowAverageLine] = useState(false)
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newSubjectName, setNewSubjectName] = useState("")
+  const [newPdfCount, setNewPdfCount] = useState(1)
 
   const calculateDaysRemaining = (subjectName: string, tableType: "Teoría" | "Práctica") => {
     const today = new Date()
@@ -261,6 +264,66 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return pdfsNeeded
   }
 
+  const handleAddSubject = async () => {
+    if (!newSubjectName.trim()) return
+    const name = newSubjectName.trim()
+    const pdfCount = newPdfCount
+
+    const newTables = tables.map((table) => ({
+      ...table,
+      tasks: [
+        ...table.tasks,
+        {
+          id: crypto.randomUUID(),
+          text: name,
+          numerator: 0,
+          denominator: pdfCount,
+        },
+      ],
+    }))
+
+    setTables(newTables)
+    setShowAddForm(false)
+    setNewSubjectName("")
+    setNewPdfCount(1)
+
+    try {
+      await fetch("/api/subjects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, pdf_count: pdfCount }),
+      })
+
+      await fetch("/api/progress", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          subjectName: name,
+          tableType: "theory",
+          totalPdfs: pdfCount,
+        }),
+      })
+
+      await fetch("/api/progress", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          subjectName: name,
+          tableType: "practice",
+          totalPdfs: pdfCount,
+        }),
+      })
+    } catch (error) {
+      console.error("Error adding subject:", error)
+    }
+  }
+
   const goToPreviousTable = () => {
     setIsTransitioning(true)
     setTimeout(() => {
@@ -312,7 +375,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   return (
     <div className="min-h-screen bg-background p-6 relative">
-      <div className="fixed top-6 right-6 z-30">
+      <div className="fixed top-6 right-6 z-30 flex gap-4">
         <Button
           onClick={() => setShowAverageLine(!showAverageLine)}
           className="w-16 h-16 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
@@ -323,7 +386,40 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             <span className="text-xs text-white font-bold">{calculateAveragePercentage()}%</span>
           </div>
         </Button>
+        <Button
+          onClick={() => setShowAddForm(true)}
+          className="w-16 h-16 rounded-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+          size="lg"
+        >
+          <Settings className="h-6 w-6 text-white" />
+        </Button>
       </div>
+      {showAddForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40">
+          <div className="bg-card p-6 rounded-lg space-y-4 w-80">
+            <h2 className="text-lg font-bold">Agregar fila</h2>
+            <Input
+              placeholder="Nombre"
+              value={newSubjectName}
+              onChange={(e) => setNewSubjectName(e.target.value)}
+              className="bg-white/80"
+            />
+            <Input
+              type="number"
+              min="1"
+              value={newPdfCount}
+              onChange={(e) => setNewPdfCount(Number.parseInt(e.target.value) || 1)}
+              className="bg-white/80"
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowAddForm(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={handleAddSubject}>Agregar</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-4xl mx-auto">
         <h1

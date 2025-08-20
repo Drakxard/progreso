@@ -55,6 +55,13 @@ export async function updateSubject(name: string, data: Partial<Subject>) {
   await sql(query, values)
 }
 
+export async function createSubject(name: string, pdfCount: number) {
+  await sql`
+    INSERT INTO subjects (name, pdf_count, theory_date, practice_date)
+    VALUES (${name}, ${pdfCount}, null, null)
+  `
+}
+
 export async function getProgress(): Promise<Progress[]> {
   const result = await sql`SELECT * FROM progress ORDER BY subject_name, table_type`
   return result as Progress[]
@@ -67,10 +74,21 @@ export async function updateProgress(
   totalPdfs: number,
 ) {
   await sql`
-    UPDATE progress 
-    SET current_progress = ${currentProgress}, 
+    UPDATE progress
+    SET current_progress = ${currentProgress},
         total_pdfs = ${totalPdfs},
         updated_at = CURRENT_TIMESTAMP
     WHERE subject_name = ${subjectName} AND table_type = ${tableType}
+  `
+}
+
+export async function createProgress(
+  subjectName: string,
+  tableType: "theory" | "practice",
+  totalPdfs: number,
+) {
+  await sql`
+    INSERT INTO progress (subject_name, table_type, current_progress, total_pdfs)
+    VALUES (${subjectName}, ${tableType}, 0, ${totalPdfs})
   `
 }

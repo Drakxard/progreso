@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getProgress, updateProgress } from "@/lib/database"
+import { getProgress, updateProgress, createProgress } from "@/lib/database"
 
 export async function GET() {
   try {
@@ -19,5 +19,16 @@ export async function PUT(request: Request) {
   } catch (error) {
     console.error("Error updating progress:", error)
     return NextResponse.json({ error: "Failed to update progress" }, { status: 500 })
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const { subjectName, tableType, totalPdfs } = await request.json()
+    await createProgress(subjectName, tableType, totalPdfs)
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error("Error creating progress:", error)
+    return NextResponse.json({ error: "Failed to create progress" }, { status: 500 })
   }
 }
