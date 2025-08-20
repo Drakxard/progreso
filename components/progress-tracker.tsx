@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ChevronLeft, ChevronRight, Flame, Sun, TreePine } from "lucide-react"
+import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, Settings } from "lucide-react"
 
 interface TaskItem {
   id: string
@@ -116,25 +116,33 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       if (response.ok) {
         const progressData = await response.json()
 
-        // Actualizar las tablas con el progreso guardado
-        const updatedTables = tables.map((table) => ({
-          ...table,
-          tasks: table.tasks.map((task) => {
-            const tableType = table.title === "Teoría" ? "theory" : "practice"
-            const savedProgress = progressData.find(
-              (p: any) => p.subject_name === task.text && p.table_type === tableType,
-            )
+        // Actualizar las tablas con el progreso guardado e insertar nuevas tareas si existen
+        const updatedTables = tables.map((table) => {
+          const tableType = table.title === "Teoría" ? "theory" : "practice"
+          const tableTasks = [...table.tasks]
 
-            if (savedProgress) {
-              return {
-                ...task,
-                numerator: savedProgress.current_progress,
-                denominator: savedProgress.total_pdfs,
+          progressData
+            .filter((p: any) => p.table_type === tableType)
+            .forEach((p: any) => {
+              const taskIndex = tableTasks.findIndex((t) => t.text === p.subject_name)
+              if (taskIndex !== -1) {
+                tableTasks[taskIndex] = {
+                  ...tableTasks[taskIndex],
+                  numerator: p.current_progress,
+                  denominator: p.total_pdfs,
+                }
+              } else {
+                tableTasks.push({
+                  id: Date.now().toString() + p.subject_name,
+                  text: p.subject_name,
+                  numerator: p.current_progress,
+                  denominator: p.total_pdfs,
+                })
               }
-            }
-            return task
-          }),
-        }))
+            })
+
+          return { ...table, tasks: tableTasks }
+        })
 
         setTables(updatedTables)
       }
@@ -210,6 +218,40 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       setTables(newTables)
 
       await saveProgressToDatabase(task.text, currentTable.title as "Teoría" | "Práctica", numerator, denominator)
+    }
+  }
+
+  const addTask = async () => {
+    const subjectName = prompt("Nombre de la materia")
+    if (!subjectName) return
+    const totalPdfsInput = prompt("Cantidad total de PDFs")
+    const totalPdfs = totalPdfsInput ? Number.parseInt(totalPdfsInput) || 1 : 1
+
+    const newTask: TaskItem = {
+      id: Date.now().toString(),
+      text: subjectName,
+      numerator: 0,
+      denominator: totalPdfs,
+    }
+    const newTables = [...tables]
+    newTables[currentTableIndex].tasks = [...newTables[currentTableIndex].tasks, newTask]
+    setTables(newTables)
+
+    const table = tables[currentTableIndex]
+    try {
+      await fetch("/api/progress", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          subjectName,
+          tableType: table.title === "Teoría" ? "theory" : "practice",
+          totalPdfs,
+        }),
+      })
+    } catch (error) {
+      console.error("Error creating progress:", error)
     }
   }
 
@@ -312,7 +354,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   return (
     <div className="min-h-screen bg-background p-6 relative">
-      <div className="fixed top-6 right-6 z-30">
+      <div className="fixed top-6 right-6 z-30 flex flex-col gap-2">
         <Button
           onClick={() => setShowAverageLine(!showAverageLine)}
           className="w-16 h-16 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
@@ -322,6 +364,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             <span className="text-xs text-white font-bold">Plus +</span>
             <span className="text-xs text-white font-bold">{calculateAveragePercentage()}%</span>
           </div>
+        </Button>
+        <Button
+          onClick={addTask}
+          className="w-16 h-16 rounded-full bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+          size="lg"
+        >
+          <Settings className="h-6 w-6 text-white" />
         </Button>
       </div>
 
