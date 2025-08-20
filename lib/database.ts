@@ -67,10 +67,21 @@ export async function updateProgress(
   totalPdfs: number,
 ) {
   await sql`
-    UPDATE progress 
-    SET current_progress = ${currentProgress}, 
+    UPDATE progress
+    SET current_progress = ${currentProgress},
         total_pdfs = ${totalPdfs},
         updated_at = CURRENT_TIMESTAMP
     WHERE subject_name = ${subjectName} AND table_type = ${tableType}
+  `
+}
+
+export async function createProgress(
+  subjectName: string,
+  tableType: "theory" | "practice",
+  totalPdfs: number,
+) {
+  await sql`
+    INSERT INTO progress (subject_name, table_type, current_progress, total_pdfs)
+    VALUES (${subjectName}, ${tableType}, 0, ${totalPdfs})
   `
 }
