@@ -10,6 +10,7 @@ interface TaskItem {
   text: string
   numerator: number
   denominator: number
+  nextDate?: string | null
 }
 
 interface Table {
@@ -37,6 +38,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [showAddForm, setShowAddForm] = useState(false)
   const [newSubjectName, setNewSubjectName] = useState("")
   const [newPdfCount, setNewPdfCount] = useState(1)
+  const [editingDaysInfo, setEditingDaysInfo] = useState<{ tableIndex: number; taskId: string } | null>(null)
+  const [newDays, setNewDays] = useState(7)
 
   const calculateDaysRemaining = (subjectName: string, tableType: "Teoría" | "Práctica") => {
     const today = new Date()
@@ -115,11 +118,53 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const loadProgressFromDatabase = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("/api/progress")
-      if (response.ok) {
-        const progressData = await response.json()
+      const [progressRes, subjectsRes] = await Promise.all([
+        fetch("/api/progress"),
+        fetch("/api/subjects"),
+      ])
 
-        // Actualizar las tablas con el progreso guardado
+      if (progressRes.ok && subjectsRes.ok) {
+        const progressData = await progressRes.json()
+        const subjectsData = await subjectsRes.json()
+
+        const today = new Date()
+        const subjectDates: Record<string, { theory_date: string | null; practice_date: string | null }> = {}
+
+        for (const subject of subjectsData) {
+          let { name, theory_date, practice_date } = subject
+
+          if (theory_date) {
+            const date = new Date(theory_date)
+            if (date <= today) {
+              const newDate = new Date()
+              newDate.setDate(today.getDate() + 7)
+              theory_date = newDate.toISOString()
+              await fetch("/api/subjects", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, theory_date }),
+              })
+            }
+          }
+
+          if (practice_date) {
+            const date = new Date(practice_date)
+            if (date <= today) {
+              const newDate = new Date()
+              newDate.setDate(today.getDate() + 7)
+              practice_date = newDate.toISOString()
+              await fetch("/api/subjects", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, practice_date }),
+              })
+            }
+          }
+
+          subjectDates[name] = { theory_date, practice_date }
+        }
+
+        // Actualizar las tablas con el progreso y las fechas
         const updatedTables = tables.map((table) => ({
           ...table,
           tasks: table.tasks.map((task) => {
@@ -127,15 +172,18 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             const savedProgress = progressData.find(
               (p: any) => p.subject_name === task.text && p.table_type === tableType,
             )
+            const dates = subjectDates[task.text] || { theory_date: null, practice_date: null }
+            const nextDate = table.title === "Teoría" ? dates.theory_date : dates.practice_date
 
             if (savedProgress) {
               return {
                 ...task,
                 numerator: savedProgress.current_progress,
                 denominator: savedProgress.total_pdfs,
+                nextDate,
               }
             }
-            return task
+            return { ...task, nextDate }
           }),
         }))
 
@@ -170,6 +218,17 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     } catch (error) {
       console.error("Error saving progress:", error)
     }
+  }
+
+  const getDaysRemaining = (task: TaskItem, tableTitle: "Teoría" | "Práctica") => {
+    if (task.nextDate) {
+      const today = new Date()
+      const target = new Date(task.nextDate)
+      let diff = Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+      if (diff <= 0) diff = 7
+      return diff
+    }
+    return calculateDaysRemaining(task.text, tableTitle)
   }
 
   useEffect(() => {
@@ -264,6 +323,41 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return pdfsNeeded
   }
 
+  const openEditDays = (task: TaskItem) => {
+    const days = getDaysRemaining(task, currentTable.title as "Teoría" | "Práctica")
+    setEditingDaysInfo({ tableIndex: currentTableIndex, taskId: task.id })
+    setNewDays(days)
+  }
+
+  const saveEditedDays = async () => {
+    if (!editingDaysInfo) return
+    const { tableIndex, taskId } = editingDaysInfo
+    const newTables = [...tables]
+    const task = newTables[tableIndex].tasks.find((t) => t.id === taskId)
+    if (task) {
+      const adjusted = newDays <= 0 ? 7 : newDays
+      const newDate = new Date()
+      newDate.setDate(newDate.getDate() + adjusted)
+      task.nextDate = newDate.toISOString()
+      setTables(newTables)
+      try {
+        await fetch("/api/subjects", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: task.text,
+            ...(tableIndex === 0
+              ? { theory_date: newDate.toISOString() }
+              : { practice_date: newDate.toISOString() }),
+          }),
+        })
+      } catch (error) {
+        console.error("Error updating days:", error)
+      }
+    }
+    setEditingDaysInfo(null)
+  }
+
   const handleAddSubject = async () => {
     if (!newSubjectName.trim()) return
     const name = newSubjectName.trim()
@@ -278,6 +372,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           text: name,
           numerator: 0,
           denominator: pdfCount,
+          nextDate: null,
         },
       ],
     }))
@@ -421,6 +516,28 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         </div>
       )}
 
+      {editingDaysInfo && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40">
+          <div className="bg-card p-6 rounded-lg space-y-4 w-80">
+            <h2 className="text-lg font-bold">Editar días restantes</h2>
+            <Input
+              type="number"
+              min="0"
+              max="7"
+              value={newDays}
+              onChange={(e) => setNewDays(Number.parseInt(e.target.value) || 0)}
+              className="bg-white/80"
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setEditingDaysInfo(null)}>
+                Cancelar
+              </Button>
+              <Button onClick={saveEditedDays}>Guardar</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-4xl mx-auto">
         <h1
           className={`text-3xl font-bold mb-8 text-center transition-all duration-300 ${isTransitioning ? "opacity-0 transform scale-95" : "opacity-100 transform scale-100"}`}
@@ -432,7 +549,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           className={`space-y-3 transition-all duration-300 ${isTransitioning ? "opacity-0 transform translate-x-4" : "opacity-100 transform translate-x-0"}`}
         >
           {currentTable.tasks.map((task) => {
-            const daysRemaining = calculateDaysRemaining(task.text, currentTable.title as "Teoría" | "Práctica")
+            const daysRemaining = getDaysRemaining(task, currentTable.title as "Teoría" | "Práctica")
             const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
             const currentPercentage = getProgressPercentage(task.numerator, task.denominator)
             const averagePercentage = calculateAveragePercentage()
@@ -448,7 +565,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 onMouseLeave={() => setHoveredTaskId(null)}
               >
                 <div
-                  className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
+                  className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg cursor-pointer`}
+                  onClick={() => openEditDays(task)}
                 >
                   <IconComponent className={`h-3 w-3 ${iconColor}`} />
                   <span>{daysRemaining}d</span>
