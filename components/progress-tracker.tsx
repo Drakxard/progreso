@@ -124,26 +124,26 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         const progressData = await response.json()
 
         // Actualizar las tablas con el progreso guardado
-        const updatedTables = tables.map((table) => ({
-          ...table,
-          tasks: table.tasks.map((task) => {
-            const tableType = table.title === "Teoría" ? "theory" : "practice"
-            const savedProgress = progressData.find(
-              (p: any) => p.subject_name === task.text && p.table_type === tableType,
-            )
+        setTables((prevTables) =>
+          prevTables.map((table) => ({
+            ...table,
+            tasks: table.tasks.map((task) => {
+              const tableType = table.title === "Teoría" ? "theory" : "practice"
+              const savedProgress = progressData.find(
+                (p: any) => p.subject_name === task.text && p.table_type === tableType,
+              )
 
-            if (savedProgress) {
-              return {
-                ...task,
-                numerator: savedProgress.current_progress,
-                denominator: savedProgress.total_pdfs,
+              if (savedProgress) {
+                return {
+                  ...task,
+                  numerator: savedProgress.current_progress,
+                  denominator: savedProgress.total_pdfs,
+                }
               }
-            }
-            return task
-          }),
-        }))
-
-        setTables(updatedTables)
+              return task
+            }),
+          }))
+        )
       }
     } catch (error) {
       console.error("Error loading progress:", error)
@@ -223,8 +223,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   }, [])
 
   useEffect(() => {
-    loadProgressFromDatabase()
-    loadImportantFromDatabase()
+    const fetchData = async () => {
+      await loadProgressFromDatabase()
+      await loadImportantFromDatabase()
+    }
+    fetchData()
   }, [])
 
   const currentTable = tables[currentTableIndex]
