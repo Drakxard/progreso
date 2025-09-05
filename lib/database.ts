@@ -2,6 +2,20 @@ import { neon } from "@neondatabase/serverless"
 
 const sql = neon(process.env.DATABASE_URL!)
 
+async function ensureImportantTasksTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS important_tasks (
+      id SERIAL PRIMARY KEY,
+      text TEXT NOT NULL,
+      numerator INTEGER DEFAULT 0,
+      denominator INTEGER DEFAULT 1,
+      days_remaining INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `
+}
+
 export interface Subject {
   id: number
   name: string
@@ -86,11 +100,13 @@ export async function updateProgress(
 }
 
 export async function getImportantTasks(): Promise<ImportantTask[]> {
+  await ensureImportantTasksTable()
   const result = await sql`SELECT * FROM important_tasks ORDER BY id`
   return result as ImportantTask[]
 }
 
 export async function createImportantTask(data: Partial<ImportantTask>) {
+  await ensureImportantTasksTable()
   await sql`
     INSERT INTO important_tasks (text, numerator, denominator, days_remaining)
     VALUES (${data.text || ""}, ${data.numerator || 0}, ${data.denominator || 1}, ${
@@ -128,9 +144,11 @@ export async function updateImportantTask(id: number, data: Partial<ImportantTas
   const query = `UPDATE important_tasks SET ${updates.join(", ")} WHERE id = $${paramIndex}`
   values.push(id)
 
+  await ensureImportantTasksTable()
   await sql(query, values)
 }
 
 export async function deleteImportantTask(id: number) {
+  await ensureImportantTasksTable()
   await sql`DELETE FROM important_tasks WHERE id = ${id}`
 }
