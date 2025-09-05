@@ -3,13 +3,14 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ChevronLeft, ChevronRight, Flame, Sun, TreePine } from "lucide-react"
+import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, Trash } from "lucide-react"
 
 interface TaskItem {
   id: string
   text: string
   numerator: number
   denominator: number
+  daysRemaining?: number
 }
 
 interface Table {
@@ -30,6 +31,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [currentTableIndex, setCurrentTableIndex] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
+  const [editingDaysId, setEditingDaysId] = useState<string | null>(null)
+  const [editDaysValue, setEditDaysValue] = useState("")
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [showAverageLine, setShowAverageLine] = useState(false)
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
@@ -107,6 +110,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         { id: "6", text: "Poo", numerator: 0, denominator: initialData.find((d) => d.name === "Poo")?.count || 1 },
       ],
     },
+    {
+      title: "IMPORTANTES",
+      tasks: [],
+    },
   ])
 
   const loadProgressFromDatabase = async () => {
@@ -169,6 +176,101 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
+  const loadImportantTasksFromDatabase = async () => {
+    try {
+      const response = await fetch("/api/important-tasks")
+      if (response.ok) {
+        const data = await response.json()
+        setTables((prev) => {
+          const newTables = [...prev]
+          const index = newTables.findIndex((t) => t.title === "IMPORTANTES")
+          if (index !== -1) {
+            newTables[index] = {
+              ...newTables[index],
+              tasks: data.map((t: any) => ({
+                id: String(t.id),
+                text: t.name,
+                numerator: t.current_progress,
+                denominator: t.total_items,
+                daysRemaining: t.days_remaining,
+              })),
+            }
+          }
+          return newTables
+        })
+      }
+    } catch (error) {
+      console.error("Error loading important tasks:", error)
+    }
+  }
+
+  const saveImportantTaskToDatabase = async (task: TaskItem) => {
+    try {
+      await fetch("/api/important-tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: Number(task.id),
+          name: task.text,
+          current_progress: task.numerator,
+          total_items: task.denominator,
+          days_remaining: task.daysRemaining ?? 0,
+        }),
+      })
+    } catch (error) {
+      console.error("Error saving important task:", error)
+    }
+  }
+
+  const addImportantTask = async () => {
+    try {
+      const response = await fetch("/api/important-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Nueva tarea" }),
+      })
+      if (response.ok) {
+        const newTask = await response.json()
+        setTables((prev) => {
+          const newTables = [...prev]
+          const index = newTables.findIndex((t) => t.title === "IMPORTANTES")
+          if (index !== -1) {
+            newTables[index].tasks.push({
+              id: String(newTask.id),
+              text: newTask.name,
+              numerator: newTask.current_progress,
+              denominator: newTask.total_items,
+              daysRemaining: newTask.days_remaining,
+            })
+          }
+          return newTables
+        })
+      }
+    } catch (error) {
+      console.error("Error adding task:", error)
+    }
+  }
+
+  const deleteImportantTask = async (id: string) => {
+    try {
+      await fetch("/api/important-tasks", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: Number(id) }),
+      })
+      setTables((prev) => {
+        const newTables = [...prev]
+        const index = newTables.findIndex((t) => t.title === "IMPORTANTES")
+        if (index !== -1) {
+          newTables[index].tasks = newTables[index].tasks.filter((task) => task.id !== id)
+        }
+        return newTables
+      })
+    } catch (error) {
+      console.error("Error deleting task:", error)
+    }
+  }
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "ArrowLeft") {
@@ -186,6 +288,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   useEffect(() => {
     loadProgressFromDatabase()
+    loadImportantTasksFromDatabase()
   }, [])
 
   const currentTable = tables[currentTableIndex]
@@ -196,6 +299,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       task.id === id ? { ...task, text: editText } : task,
     )
     setTables(newTables)
+    const savedTask = newTables[currentTableIndex].tasks.find((t) => t.id === id)
+    if (currentTable.title === "IMPORTANTES" && savedTask) {
+      void saveImportantTaskToDatabase(savedTask)
+    }
     setEditingId(null)
     setEditText("")
   }
@@ -209,8 +316,26 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       newTables[currentTableIndex].tasks[taskIndex] = { ...task, numerator, denominator }
       setTables(newTables)
 
-      await saveProgressToDatabase(task.text, currentTable.title as "Teoría" | "Práctica", numerator, denominator)
+      if (currentTable.title === "IMPORTANTES") {
+        await saveImportantTaskToDatabase(newTables[currentTableIndex].tasks[taskIndex])
+      } else {
+        await saveProgressToDatabase(task.text, currentTable.title as "Teoría" | "Práctica", numerator, denominator)
+      }
     }
+  }
+
+  const saveDays = async (id: string) => {
+    const newTables = [...tables]
+    const taskIndex = newTables[currentTableIndex].tasks.findIndex((task) => task.id === id)
+    if (taskIndex !== -1) {
+      const task = newTables[currentTableIndex].tasks[taskIndex]
+      const updated = { ...task, daysRemaining: Number.parseInt(editDaysValue) || 0 }
+      newTables[currentTableIndex].tasks[taskIndex] = updated
+      setTables(newTables)
+      await saveImportantTaskToDatabase(updated)
+    }
+    setEditingDaysId(null)
+    setEditDaysValue("")
   }
 
   const getProgressPercentage = (numerator: number, denominator: number) => {
@@ -312,6 +437,19 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   return (
     <div className="min-h-screen bg-background p-6 relative">
+      <div className="fixed top-6 left-6 z-30">
+        <Button
+          onClick={() =>
+            setCurrentTableIndex(tables.findIndex((t) => t.title === "IMPORTANTES"))
+          }
+          className="w-16 h-16 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+          size="lg"
+        >
+          <div className="flex flex-col items-center">
+            <span className="text-xs text-white font-bold">Imp</span>
+          </div>
+        </Button>
+      </div>
       <div className="fixed top-6 right-6 z-30">
         <Button
           onClick={() => setShowAverageLine(!showAverageLine)}
@@ -336,7 +474,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           className={`space-y-3 transition-all duration-300 ${isTransitioning ? "opacity-0 transform translate-x-4" : "opacity-100 transform translate-x-0"}`}
         >
           {currentTable.tasks.map((task) => {
-            const daysRemaining = calculateDaysRemaining(task.text, currentTable.title as "Teoría" | "Práctica")
+            const daysRemaining =
+              currentTable.title === "IMPORTANTES"
+                ? task.daysRemaining ?? 0
+                : calculateDaysRemaining(task.text, currentTable.title as "Teoría" | "Práctica")
             const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
             const currentPercentage = getProgressPercentage(task.numerator, task.denominator)
             const averagePercentage = calculateAveragePercentage()
@@ -354,8 +495,34 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 <div
                   className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
                 >
-                  <IconComponent className={`h-3 w-3 ${iconColor}`} />
-                  <span>{daysRemaining}d</span>
+                  {currentTable.title === "IMPORTANTES" && editingDaysId === task.id ? (
+                    <Input
+                      type="number"
+                      value={editDaysValue}
+                      onChange={(e) => setEditDaysValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          void saveDays(task.id)
+                        }
+                      }}
+                      onBlur={() => void saveDays(task.id)}
+                      className="w-12 h-4 text-black text-xs"
+                      min="0"
+                    />
+                  ) : (
+                    <div
+                      className="flex items-center gap-1 cursor-pointer"
+                      onClick={() => {
+                        if (currentTable.title === "IMPORTANTES") {
+                          setEditingDaysId(task.id)
+                          setEditDaysValue(String(task.daysRemaining ?? 0))
+                        }
+                      }}
+                    >
+                      <IconComponent className={`h-3 w-3 ${iconColor}`} />
+                      <span>{daysRemaining}d</span>
+                    </div>
+                  )}
                 </div>
 
                 <div
@@ -436,6 +603,16 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                   <div className="text-sm text-muted-foreground font-medium shrink-0 w-12 text-right">
                     {Math.round(getProgressPercentage(task.numerator, task.denominator))}%
                   </div>
+                  {currentTable.title === "IMPORTANTES" && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => deleteImportantTask(task.id)}
+                      className="shrink-0"
+                    >
+                      <Trash className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </div>
             )
@@ -450,6 +627,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             <ChevronRight className="h-6 w-6" />
           </Button>
         </div>
+        {currentTable.title === "IMPORTANTES" && (
+          <div className="flex justify-center mt-6">
+            <Button onClick={addImportantTask}>Agregar</Button>
+          </div>
+        )}
       </div>
     </div>
   )
