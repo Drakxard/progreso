@@ -350,12 +350,28 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   }
 
   const addImportantTask = async () => {
-    await fetch("/api/important", {
+    const response = await fetch("/api/important", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     })
-    await loadImportantFromDatabase()
+    if (response.ok) {
+      const task = await response.json()
+      setTables((prev) => {
+        const newTables = [...prev]
+        const index = newTables.findIndex((t) => t.title === "Importantes")
+        if (index !== -1) {
+          newTables[index].tasks.push({
+            id: String(task.id),
+            text: task.text,
+            numerator: task.numerator,
+            denominator: task.denominator,
+            days: task.days_remaining,
+          })
+        }
+        return newTables
+      })
+    }
   }
 
   const removeImportantTask = async (id: string) => {

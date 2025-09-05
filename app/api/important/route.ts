@@ -19,8 +19,8 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const data = await request.json()
-    await createImportantTask(data)
-    return NextResponse.json({ success: true })
+    const task = await createImportantTask(data)
+    return NextResponse.json(task)
   } catch (error) {
     console.error("Error creating important task:", error)
     return NextResponse.json({ error: "Failed to create" }, { status: 500 })
