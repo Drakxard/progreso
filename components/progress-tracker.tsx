@@ -99,6 +99,36 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     },
   ])
 
+  const saveTopicsToLocalStorage = (tables: Table[]) => {
+    const topicsData: Record<string, string[]> = {}
+    tables.forEach((table) => {
+      table.tasks.forEach((task) => {
+        if (task.topics && task.topics.length > 0) {
+          topicsData[task.id] = task.topics
+        }
+      })
+    })
+    localStorage.setItem("taskTopics", JSON.stringify(topicsData))
+  }
+
+  const loadTopicsFromLocalStorage = () => {
+    const stored = localStorage.getItem("taskTopics")
+    if (stored) {
+      const topicsData = JSON.parse(stored) as Record<string, string[]>
+      setTables((prev) => {
+        const updatedTables = prev.map((table) => ({
+          ...table,
+          tasks: table.tasks.map((task) => ({
+            ...task,
+            topics: topicsData[task.id] || [],
+          })),
+        }))
+        saveTopicsToLocalStorage(updatedTables)
+        return updatedTables
+      })
+    }
+  }
+
   const loadProgressFromDatabase = async () => {
     try {
       setIsLoading(true)
@@ -214,6 +244,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const fetchData = async () => {
       await loadProgressFromDatabase()
       await loadImportantFromDatabase()
+      loadTopicsFromLocalStorage()
     }
     fetchData()
   }, [])
@@ -374,6 +405,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         const task = tasks[taskIndex]
         const topics = task.topics || []
         tasks[taskIndex] = { ...task, topics: [...topics, topic.trim()] }
+        saveTopicsToLocalStorage(newTables)
       }
       return newTables
     })
@@ -388,6 +420,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         const task = tasks[taskIndex]
         const topics = task.topics || []
         tasks[taskIndex] = { ...task, topics: topics.filter((_, i) => i !== index) }
+        saveTopicsToLocalStorage(newTables)
       }
       return newTables
     })
@@ -404,6 +437,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       const index = newTables.findIndex((t) => t.title === "Importantes")
       if (index !== -1) {
         newTables[index].tasks = newTables[index].tasks.filter((t) => t.id !== id)
+        saveTopicsToLocalStorage(newTables)
       }
       return newTables
     })
