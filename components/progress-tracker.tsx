@@ -11,6 +11,7 @@ interface TaskItem {
   numerator: number
   denominator: number
   days?: number
+  topics?: string[]
 }
 
 interface Table {
@@ -37,41 +38,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [showAverageLine, setShowAverageLine] = useState(false)
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-
-  const calculateDaysRemaining = (subjectName: string, tableType: "Teoría" | "Práctica") => {
-    const today = new Date()
-    const currentDay = today.getDay() // 0 = domingo, 1 = lunes, etc.
-
-    let targetDay: number
-
-    // Configuración del horario fijo
-    if (tableType === "Práctica") {
-      if (subjectName === "Álgebra" || subjectName === "Cálculo") {
-        targetDay = 1 // Lunes
-      } else if (subjectName === "Poo") {
-        targetDay = 5 // Viernes
-      } else {
-        return 0
-      }
-    } else {
-      // Teoría
-      if (subjectName === "Álgebra" || subjectName === "Cálculo") {
-        targetDay = 4 // Jueves
-      } else if (subjectName === "Poo") {
-        targetDay = 2 // Martes
-      } else {
-        return 0
-      }
-    }
-
-    // Calcular días hasta el próximo día objetivo
-    let daysUntil = targetDay - currentDay
-    if (daysUntil <= 0) {
-      daysUntil += 7 // Si ya pasó esta semana, calcular para la próxima
-    }
-
-    return daysUntil
-  }
+  const [newTopicInputs, setNewTopicInputs] = useState<Record<string, string>>({})
 
   const [tables, setTables] = useState<Table[]>([
     {
@@ -82,14 +49,25 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           text: "Álgebra",
           numerator: 0,
           denominator: initialData.find((d) => d.name === "Álgebra")?.count || 1,
+          days: 0,
+          topics: [],
         },
         {
           id: "2",
           text: "Cálculo",
           numerator: 0,
           denominator: initialData.find((d) => d.name === "Cálculo")?.count || 1,
+          days: 0,
+          topics: [],
         },
-        { id: "3", text: "Poo", numerator: 0, denominator: initialData.find((d) => d.name === "Poo")?.count || 1 },
+        {
+          id: "3",
+          text: "Poo",
+          numerator: 0,
+          denominator: initialData.find((d) => d.name === "Poo")?.count || 1,
+          days: 0,
+          topics: [],
+        },
       ],
     },
     {
@@ -100,14 +78,25 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           text: "Álgebra",
           numerator: 0,
           denominator: initialData.find((d) => d.name === "Álgebra")?.count || 1,
+          days: 0,
+          topics: [],
         },
         {
           id: "5",
           text: "Cálculo",
           numerator: 0,
           denominator: initialData.find((d) => d.name === "Cálculo")?.count || 1,
+          days: 0,
+          topics: [],
         },
-        { id: "6", text: "Poo", numerator: 0, denominator: initialData.find((d) => d.name === "Poo")?.count || 1 },
+        {
+          id: "6",
+          text: "Poo",
+          numerator: 0,
+          denominator: initialData.find((d) => d.name === "Poo")?.count || 1,
+          days: 0,
+          topics: [],
+        },
       ],
     },
     {
@@ -136,8 +125,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
               if (savedProgress) {
                 return {
                   ...task,
-                  numerator: savedProgress.current_progress,
+                  numerator: savedProgress.total_pdfs - savedProgress.current_progress,
                   denominator: savedProgress.total_pdfs,
+                  days: savedProgress.current_progress,
+                  topics: task.topics || [],
                 }
               }
               return task
@@ -170,6 +161,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 numerator: t.numerator,
                 denominator: t.denominator,
                 days: t.days_remaining,
+                topics: [],
               })),
             }
           }
@@ -183,11 +175,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
-  const saveProgressToDatabase = async (
+  const saveDaysToDatabase = async (
     subjectName: string,
     tableType: "Teoría" | "Práctica",
-    numerator: number,
-    denominator: number,
+    days: number,
+    totalDays: number,
   ) => {
     try {
       await fetch("/api/progress", {
@@ -198,8 +190,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         body: JSON.stringify({
           subjectName,
           tableType: tableType === "Teoría" ? "theory" : "practice",
-          currentProgress: numerator,
-          totalPdfs: denominator,
+          currentProgress: days,
+          totalPdfs: totalDays,
         }),
       })
     } catch (error) {
@@ -257,13 +249,91 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
-  const updateProgress = async (id: string, numerator: number, denominator: number) => {
+  const updateImportantProgress = async (id: string, numerator: number, denominator: number) => {
     const newTables = [...tables]
     const taskIndex = newTables[currentTableIndex].tasks.findIndex((task) => task.id === id)
 
     if (taskIndex !== -1) {
       const task = newTables[currentTableIndex].tasks[taskIndex]
       newTables[currentTableIndex].tasks[taskIndex] = { ...task, numerator, denominator }
+      setTables(newTables)
+      await fetch("/api/important", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: Number(task.id),
+          text: task.text,
+          numerator,
+          denominator,
+          days_remaining: task.days || 0,
+        }),
+      })
+    }
+  }
+
+  const getTaskProgress = (task: TaskItem) => {
+    if (currentTable.title === "Importantes") {
+      if (task.denominator === 0) return 0
+      return Math.min((task.numerator / task.denominator) * 100, 100)
+    }
+    if (task.denominator === 0) return 0
+    const daysPassed = task.denominator - (task.days || 0)
+    return Math.min((daysPassed / task.denominator) * 100, 100)
+  }
+
+  const calculateAveragePercentage = () => {
+    const currentTasks = currentTable.tasks
+    const totalPercentage = currentTasks.reduce((sum, task) => {
+      return sum + getTaskProgress(task)
+    }, 0)
+    return Math.round(totalPercentage / currentTasks.length)
+  }
+
+  const calculateNeededUnits = (task: TaskItem) => {
+    if (currentTable.title !== "Importantes") return 0
+    const currentTasks = currentTable.tasks
+    const currentPercentage = getTaskProgress(task)
+
+    const currentAverage = calculateAveragePercentage()
+    if (currentPercentage >= currentAverage) return 0
+
+    let unitsNeeded = 0
+    let testNumerator = task.numerator
+
+    while (unitsNeeded < task.denominator) {
+      testNumerator = task.numerator + unitsNeeded
+
+      const newTotalPercentage = currentTasks.reduce((sum, t) => {
+        if (t.id === task.id) {
+          return sum + getTaskProgress({ ...t, numerator: testNumerator })
+        }
+        return sum + getTaskProgress(t)
+      }, 0)
+
+      const newAverage = newTotalPercentage / currentTasks.length
+      const newTaskPercentage = getTaskProgress({ ...task, numerator: testNumerator })
+
+      if (newTaskPercentage >= newAverage) {
+        break
+      }
+
+      unitsNeeded++
+    }
+
+    return unitsNeeded
+  }
+
+  const updateDays = async (id: string, days: number, denominator?: number) => {
+    const newTables = [...tables]
+    const taskIndex = newTables[currentTableIndex].tasks.findIndex((task) => task.id === id)
+    if (taskIndex !== -1) {
+      const task = newTables[currentTableIndex].tasks[taskIndex]
+      const updatedTask = {
+        ...task,
+        days,
+        denominator: denominator ?? task.denominator,
+      }
+      newTables[currentTableIndex].tasks[taskIndex] = updatedTask
       setTables(newTables)
       if (currentTable.title === "Importantes") {
         await fetch("/api/important", {
@@ -272,84 +342,52 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           body: JSON.stringify({
             id: Number(task.id),
             text: task.text,
-            numerator,
-            denominator,
-            days_remaining: task.days || 0,
+            numerator: task.numerator,
+            denominator: updatedTask.denominator,
+            days_remaining: days,
           }),
         })
       } else {
-        await saveProgressToDatabase(task.text, currentTable.title as "Teoría" | "Práctica", numerator, denominator)
+        await saveDaysToDatabase(
+          task.text,
+          currentTable.title as "Teoría" | "Práctica",
+          days,
+          updatedTask.denominator,
+        )
       }
     }
   }
 
-  const getProgressPercentage = (numerator: number, denominator: number) => {
-    if (denominator === 0) return 0
-    return Math.min((numerator / denominator) * 100, 100)
+  const updateDenominator = async (id: string, denominator: number) => {
+    const task = tables[currentTableIndex].tasks.find((t) => t.id === id)
+    if (task) {
+      await updateDays(id, task.days || 0, denominator)
+    }
   }
 
-  const calculateAveragePercentage = () => {
-    const currentTasks = currentTable.tasks
-    const totalPercentage = currentTasks.reduce((sum, task) => {
-      return sum + getProgressPercentage(task.numerator, task.denominator)
-    }, 0)
-    return Math.round(totalPercentage / currentTasks.length)
-  }
-
-  const calculatePdfsNeeded = (task: TaskItem) => {
-    const currentTasks = currentTable.tasks
-    const currentPercentage = getProgressPercentage(task.numerator, task.denominator)
-
-    // Calcular la media actual
-    const currentAverage = calculateAveragePercentage()
-
-    if (currentPercentage >= currentAverage) return 0
-
-    let pdfsNeeded = 0
-    let testNumerator = task.numerator
-
-    while (pdfsNeeded < task.denominator) {
-      testNumerator = task.numerator + pdfsNeeded
-
-      const newTotalPercentage = currentTasks.reduce((sum, t) => {
-        if (t.id === task.id) {
-          return sum + getProgressPercentage(testNumerator, t.denominator)
-        }
-        return sum + getProgressPercentage(t.numerator, t.denominator)
-      }, 0)
-
-      const newAverage = newTotalPercentage / currentTasks.length
-      const newTaskPercentage = getProgressPercentage(testNumerator, task.denominator)
-
-      if (newTaskPercentage >= newAverage) {
-        break
+  const addTopic = (id: string) => {
+    const topic = newTopicInputs[id]?.trim()
+    if (!topic) return
+    setTables((prev) => {
+      const newTables = [...prev]
+      const task = newTables[currentTableIndex].tasks.find((t) => t.id === id)
+      if (task) {
+        task.topics = [...(task.topics || []), topic]
       }
-
-      pdfsNeeded++
-    }
-
-    return pdfsNeeded
+      return newTables
+    })
+    setNewTopicInputs((prev) => ({ ...prev, [id]: "" }))
   }
 
-  const updateDays = async (id: string, days: number) => {
-    const newTables = [...tables]
-    const taskIndex = newTables[currentTableIndex].tasks.findIndex((task) => task.id === id)
-    if (taskIndex !== -1) {
-      const task = newTables[currentTableIndex].tasks[taskIndex]
-      newTables[currentTableIndex].tasks[taskIndex] = { ...task, days }
-      setTables(newTables)
-      await fetch("/api/important", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: Number(task.id),
-          text: task.text,
-          numerator: task.numerator,
-          denominator: task.denominator,
-          days_remaining: days,
-        }),
-      })
-    }
+  const removeTopic = (id: string, index: number) => {
+    setTables((prev) => {
+      const newTables = [...prev]
+      const task = newTables[currentTableIndex].tasks.find((t) => t.id === id)
+      if (task && task.topics) {
+        task.topics = task.topics.filter((_, i) => i !== index)
+      }
+      return newTables
+    })
   }
 
   const addImportantTask = async () => {
@@ -370,6 +408,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             numerator: task.numerator,
             denominator: task.denominator,
             days: task.days_remaining,
+            topics: [],
           })
         }
         return newTables
@@ -479,16 +518,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           className={`space-y-3 transition-all duration-300 ${isTransitioning ? "opacity-0 transform translate-x-4" : "opacity-100 transform translate-x-0"}`}
         >
           {currentTable.tasks.map((task) => {
-            const daysRemaining =
-              currentTable.title === "Importantes"
-                ? task.days || 0
-                : calculateDaysRemaining(task.text, currentTable.title as "Teoría" | "Práctica")
+              const daysRemaining = task.days || 0
             const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
-            const currentPercentage = getProgressPercentage(task.numerator, task.denominator)
+            const currentPercentage = getTaskProgress(task)
             const averagePercentage = calculateAveragePercentage()
             const isBelowAverage = currentPercentage < averagePercentage
             const isHovered = hoveredTaskId === task.id
-            const missingPdfs = calculatePdfsNeeded(task)
+            const missingPdfs = calculateNeededUnits(task)
 
             return (
               <div
@@ -498,16 +534,14 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 onMouseLeave={() => setHoveredTaskId(null)}
               >
                 <div
-                  className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
+                className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
                   onClick={() => {
-                    if (currentTable.title === "Importantes") {
-                      setEditingDaysId(task.id)
-                      setEditDaysValue(String(task.days || 0))
-                    }
+                    setEditingDaysId(task.id)
+                    setEditDaysValue(String(task.days || 0))
                   }}
                 >
                   <IconComponent className={`h-3 w-3 ${iconColor}`} />
-                  {currentTable.title === "Importantes" && editingDaysId === task.id ? (
+                  {editingDaysId === task.id ? (
                     <Input
                       value={editDaysValue}
                       onChange={(e) => setEditDaysValue(e.target.value)}
@@ -531,7 +565,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 <div
                   className="absolute inset-0 bg-gradient-to-r from-green-200 to-green-400 transition-all duration-300 ease-out"
                   style={{
-                    width: `${getProgressPercentage(task.numerator, task.denominator)}%`,
+                    width: `${getTaskProgress(task)}%`,
                   }}
                 />
 
@@ -550,7 +584,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                       <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-24 h-24 rounded-full bg-gradient-radial from-white via-gray-200 to-gray-800 flex items-center justify-center shadow-lg z-30">
                         <div className="text-center">
                           <div className="text-xs font-bold text-gray-800">Faltan</div>
-                          <div className="text-sm font-bold text-gray-900">{missingPdfs} pdfs</div>
+                          <div className="text-sm font-bold text-gray-900">
+                            {missingPdfs} {currentTable.title === "Importantes" ? "pdfs" : "días"}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -587,25 +623,54 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <Input
-                      type="number"
-                      value={task.numerator}
-                      onChange={(e) => updateProgress(task.id, Number.parseInt(e.target.value) || 0, task.denominator)}
-                      className="w-16 text-center bg-white/80 backdrop-blur-sm"
-                      min="0"
-                    />
-                    <span className="text-muted-foreground font-medium">/</span>
-                    <Input
-                      type="number"
-                      value={task.denominator}
-                      onChange={(e) => updateProgress(task.id, task.numerator, Number.parseInt(e.target.value) || 1)}
-                      className="w-16 text-center bg-white/80 backdrop-blur-sm"
-                      min="1"
-                    />
+                    {currentTable.title === "Importantes" ? (
+                      <>
+                        <Input
+                          type="number"
+                          value={task.numerator}
+                          onChange={(e) =>
+                            updateImportantProgress(
+                              task.id,
+                              Number.parseInt(e.target.value) || 0,
+                              task.denominator,
+                            )
+                          }
+                          className="w-16 text-center bg-white/80 backdrop-blur-sm"
+                          min="0"
+                        />
+                        <span className="text-muted-foreground font-medium">/</span>
+                        <Input
+                          type="number"
+                          value={task.denominator}
+                          onChange={(e) =>
+                            updateImportantProgress(
+                              task.id,
+                              task.numerator,
+                              Number.parseInt(e.target.value) || 1,
+                            )
+                          }
+                          className="w-16 text-center bg-white/80 backdrop-blur-sm"
+                          min="1"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-muted-foreground font-medium">Max</span>
+                        <Input
+                          type="number"
+                          value={task.denominator}
+                          onChange={(e) =>
+                            updateDenominator(task.id, Number.parseInt(e.target.value) || 1)
+                          }
+                          className="w-16 text-center bg-white/80 backdrop-blur-sm"
+                          min="1"
+                        />
+                      </>
+                    )}
                   </div>
 
                   <div className="text-sm text-muted-foreground font-medium shrink-0 w-12 text-right">
-                    {Math.round(getProgressPercentage(task.numerator, task.denominator))}%
+                    {Math.round(getTaskProgress(task))}%
                   </div>
                   {currentTable.title === "Importantes" && (
                     <Button
@@ -617,6 +682,28 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                       <X className="h-4 w-4" />
                     </Button>
                   )}
+                </div>
+                <div className="p-3 flex flex-wrap gap-2">
+                  {task.topics?.map((topic, index) => (
+                    <span
+                      key={index}
+                      onClick={() => removeTopic(task.id, index)}
+                      className="bg-green-500 text-white px-2 py-1 rounded-full text-xs cursor-pointer"
+                    >
+                      {topic}
+                    </span>
+                  ))}
+                  <Input
+                    value={newTopicInputs[task.id] || ""}
+                    onChange={(e) =>
+                      setNewTopicInputs({ ...newTopicInputs, [task.id]: e.target.value })
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") addTopic(task.id)
+                    }}
+                    placeholder="Agregar tema"
+                    className="w-auto h-6 text-xs"
+                  />
                 </div>
               </div>
             )
