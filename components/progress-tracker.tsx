@@ -48,21 +48,21 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           id: "1",
           text: "Álgebra",
           numerator: 0,
-          denominator: initialData.find((d) => d.name === "Álgebra")?.count || 1,
+          denominator: 7,
           topics: [],
         },
         {
           id: "2",
           text: "Cálculo",
           numerator: 0,
-          denominator: initialData.find((d) => d.name === "Cálculo")?.count || 1,
+          denominator: 7,
           topics: [],
         },
         {
           id: "3",
           text: "Poo",
           numerator: 0,
-          denominator: initialData.find((d) => d.name === "Poo")?.count || 1,
+          denominator: 7,
           topics: [],
         },
       ],
@@ -74,21 +74,21 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           id: "4",
           text: "Álgebra",
           numerator: 0,
-          denominator: initialData.find((d) => d.name === "Álgebra")?.count || 1,
+          denominator: 7,
           topics: [],
         },
         {
           id: "5",
           text: "Cálculo",
           numerator: 0,
-          denominator: initialData.find((d) => d.name === "Cálculo")?.count || 1,
+          denominator: 7,
           topics: [],
         },
         {
           id: "6",
           text: "Poo",
           numerator: 0,
-          denominator: initialData.find((d) => d.name === "Poo")?.count || 1,
+          denominator: 7,
           topics: [],
         },
       ],
@@ -119,8 +119,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
               if (savedProgress) {
                 return {
                   ...task,
-                  numerator: savedProgress.current_progress,
-                  denominator: savedProgress.total_pdfs,
+                  numerator: savedProgress.current_progress % 7,
+                  denominator: 7,
                 }
               }
               return task
@@ -147,14 +147,17 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           if (index !== -1) {
             newTables[index] = {
               ...newTables[index],
-              tasks: tasks.map((t: any) => ({
-                id: String(t.id),
-                text: t.text,
-                numerator: t.numerator,
-                denominator: t.denominator,
-                days: t.days_remaining,
-                topics: [],
-              })),
+              tasks: tasks.map((t: any) => {
+                const daysRemaining = t.days_remaining ?? 7
+                return {
+                  id: String(t.id),
+                  text: t.text,
+                  days: daysRemaining,
+                  numerator: 7 - daysRemaining,
+                  denominator: 7,
+                  topics: [],
+                }
+              }),
             }
           }
           return newTables
@@ -171,7 +174,6 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     subjectName: string,
     tableType: "Teoría" | "Práctica",
     numerator: number,
-    denominator: number,
   ) => {
     try {
       await fetch("/api/progress", {
@@ -183,7 +185,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           subjectName,
           tableType: tableType === "Teoría" ? "theory" : "practice",
           currentProgress: numerator,
-          totalPdfs: denominator,
+          totalPdfs: 7,
         }),
       })
     } catch (error) {
@@ -295,7 +297,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     if (taskIndex !== -1) {
       const task = newTables[currentTableIndex].tasks[taskIndex]
       if (currentTable.title === "Importantes") {
-        newTables[currentTableIndex].tasks[taskIndex] = { ...task, days }
+        newTables[currentTableIndex].tasks[taskIndex] = {
+          ...task,
+          days,
+          numerator: 7 - days,
+          denominator: 7,
+        }
         setTables(newTables)
         await fetch("/api/important", {
           method: "PUT",
@@ -303,19 +310,24 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           body: JSON.stringify({
             id: Number(task.id),
             text: task.text,
-            numerator: task.numerator,
-            denominator: task.denominator,
+            numerator: 7 - days,
+            denominator: 7,
             days_remaining: days,
           }),
         })
       } else {
-        const newNumerator = (task.denominator || 0) - days
+        const newNumerator = 7 - days
         newTables[currentTableIndex].tasks[taskIndex] = {
           ...task,
           numerator: newNumerator,
+          denominator: 7,
         }
         setTables(newTables)
-        await saveProgressToDatabase(task.text, currentTable.title as "Teoría" | "Práctica", newNumerator, task.denominator)
+        await saveProgressToDatabase(
+          task.text,
+          currentTable.title as "Teoría" | "Práctica",
+          newNumerator,
+        )
       }
     }
   }
@@ -332,12 +344,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         const newTables = [...prev]
         const index = newTables.findIndex((t) => t.title === "Importantes")
         if (index !== -1) {
+          const daysRemaining = task.days_remaining ?? 7
           newTables[index].tasks.push({
             id: String(task.id),
             text: task.text,
-            numerator: task.numerator,
-            denominator: task.denominator,
-            days: task.days_remaining,
+            days: daysRemaining,
+            numerator: 7 - daysRemaining,
+            denominator: 7,
             topics: [],
           })
         }
