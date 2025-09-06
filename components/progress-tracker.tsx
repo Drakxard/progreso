@@ -148,13 +148,15 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             newTables[index] = {
               ...newTables[index],
               tasks: tasks.map((t: any) => {
-                const daysRemaining = t.days_remaining ?? 7
+                const denominator = Math.max(t.denominator ?? 7, t.days_remaining ?? 0)
+                const daysRemaining = t.days_remaining ?? denominator
+                const numerator = denominator - daysRemaining
                 return {
                   id: String(t.id),
                   text: t.text,
                   days: daysRemaining,
-                  numerator: 7 - daysRemaining,
-                  denominator: 7,
+                  numerator,
+                  denominator,
                   topics: [],
                 }
               }),
@@ -297,11 +299,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     if (taskIndex !== -1) {
       const task = newTables[currentTableIndex].tasks[taskIndex]
       if (currentTable.title === "Importantes") {
+        const newDenominator = Math.max(task.denominator, days)
+        const newNumerator = newDenominator - days
         newTables[currentTableIndex].tasks[taskIndex] = {
           ...task,
           days,
-          numerator: 7 - days,
-          denominator: 7,
+          numerator: newNumerator,
+          denominator: newDenominator,
         }
         setTables(newTables)
         await fetch("/api/important", {
@@ -310,8 +314,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           body: JSON.stringify({
             id: Number(task.id),
             text: task.text,
-            numerator: 7 - days,
-            denominator: 7,
+            numerator: newNumerator,
+            denominator: newDenominator,
             days_remaining: days,
           }),
         })
@@ -336,7 +340,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const response = await fetch("/api/important", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ denominator: 7, days_remaining: 7 }),
     })
     if (response.ok) {
       const task = await response.json()
@@ -344,13 +348,15 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         const newTables = [...prev]
         const index = newTables.findIndex((t) => t.title === "Importantes")
         if (index !== -1) {
-          const daysRemaining = task.days_remaining ?? 7
+          const denominator = Math.max(task.denominator ?? 7, task.days_remaining ?? 0)
+          const daysRemaining = task.days_remaining ?? denominator
+          const numerator = denominator - daysRemaining
           newTables[index].tasks.push({
             id: String(task.id),
             text: task.text,
             days: daysRemaining,
-            numerator: 7 - daysRemaining,
-            denominator: 7,
+            numerator,
+            denominator,
             topics: [],
           })
         }
