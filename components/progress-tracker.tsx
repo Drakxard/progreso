@@ -249,9 +249,6 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         body: JSON.stringify({
           id: Number(updatedTask.id),
           text: updatedTask.text,
-          numerator: updatedTask.numerator,
-          denominator: updatedTask.denominator,
-          days_remaining: updatedTask.days || 0,
         }),
       })
     }
@@ -271,10 +268,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id: Number(task.id),
-            text: task.text,
             numerator,
             denominator,
-            days_remaining: task.days || 0,
           }),
         })
       } else {
@@ -343,9 +338,6 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: Number(task.id),
-          text: task.text,
-          numerator: task.numerator,
-          denominator: task.denominator,
           days_remaining: days,
         }),
       })
@@ -568,6 +560,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                             saveTask(task.id)
                           }
                         }}
+                        onBlur={() => saveTask(task.id)}
                         placeholder="Escribe tu tarea..."
                         className="bg-transparent border-none shadow-none focus-visible:ring-0"
                         autoFocus
