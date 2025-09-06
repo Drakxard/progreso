@@ -99,6 +99,26 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     },
   ])
 
+  const loadTopicsFromLocalStorage = () => {
+    try {
+      const stored = localStorage.getItem("taskTopics")
+      if (stored) {
+        const topicData: Record<string, string[]> = JSON.parse(stored)
+          setTables((prevTables) =>
+            prevTables.map((table) => ({
+              ...table,
+              tasks: table.tasks.map((task) => ({
+                ...task,
+                topics: topicData[task.id] ?? task.topics ?? [],
+              })),
+            }))
+          )
+      }
+    } catch (error) {
+      console.error("Error loading topics from localStorage:", error)
+    }
+  }
+
   const loadProgressFromDatabase = async () => {
     try {
       setIsLoading(true)
@@ -172,6 +192,22 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
+  useEffect(() => {
+    const topicMap: Record<string, string[]> = {}
+    tables.forEach((table) => {
+      table.tasks.forEach((task) => {
+        if (task.topics && task.topics.length > 0) {
+          topicMap[task.id] = task.topics
+        }
+      })
+    })
+    try {
+      localStorage.setItem("taskTopics", JSON.stringify(topicMap))
+    } catch (error) {
+      console.error("Error saving topics to localStorage:", error)
+    }
+  }, [tables])
+
   const saveProgressToDatabase = async (
     subjectName: string,
     tableType: "Teoría" | "Práctica",
@@ -214,6 +250,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const fetchData = async () => {
       await loadProgressFromDatabase()
       await loadImportantFromDatabase()
+      loadTopicsFromLocalStorage()
     }
     fetchData()
   }, [])
