@@ -73,6 +73,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return daysUntil
   }
 
+  const getDaysFromInitial = (name: string, type: "theory" | "practice") => {
+    const data = initialData.find((d) => d.name === name)
+    const value = type === "theory" ? data?.theoryDate : data?.practiceDate
+    return value ? Number.parseInt(value) : undefined
+  }
+
   const [tables, setTables] = useState<Table[]>([
     {
       title: "Teoría",
@@ -82,14 +88,22 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           text: "Álgebra",
           numerator: 0,
           denominator: initialData.find((d) => d.name === "Álgebra")?.count || 1,
+          days: getDaysFromInitial("Álgebra", "theory"),
         },
         {
           id: "2",
           text: "Cálculo",
           numerator: 0,
           denominator: initialData.find((d) => d.name === "Cálculo")?.count || 1,
+          days: getDaysFromInitial("Cálculo", "theory"),
         },
-        { id: "3", text: "Poo", numerator: 0, denominator: initialData.find((d) => d.name === "Poo")?.count || 1 },
+        {
+          id: "3",
+          text: "Poo",
+          numerator: 0,
+          denominator: initialData.find((d) => d.name === "Poo")?.count || 1,
+          days: getDaysFromInitial("Poo", "theory"),
+        },
       ],
     },
     {
@@ -100,14 +114,22 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           text: "Álgebra",
           numerator: 0,
           denominator: initialData.find((d) => d.name === "Álgebra")?.count || 1,
+          days: getDaysFromInitial("Álgebra", "practice"),
         },
         {
           id: "5",
           text: "Cálculo",
           numerator: 0,
           denominator: initialData.find((d) => d.name === "Cálculo")?.count || 1,
+          days: getDaysFromInitial("Cálculo", "practice"),
         },
-        { id: "6", text: "Poo", numerator: 0, denominator: initialData.find((d) => d.name === "Poo")?.count || 1 },
+        {
+          id: "6",
+          text: "Poo",
+          numerator: 0,
+          denominator: initialData.find((d) => d.name === "Poo")?.count || 1,
+          days: getDaysFromInitial("Poo", "practice"),
+        },
       ],
     },
     {
@@ -333,22 +355,36 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   const updateDays = async (id: string, days: number) => {
     const newTables = [...tables]
-    const taskIndex = newTables[currentTableIndex].tasks.findIndex((task) => task.id === id)
+    const table = newTables[currentTableIndex]
+    const taskIndex = table.tasks.findIndex((task) => task.id === id)
     if (taskIndex !== -1) {
-      const task = newTables[currentTableIndex].tasks[taskIndex]
-      newTables[currentTableIndex].tasks[taskIndex] = { ...task, days }
+      const task = table.tasks[taskIndex]
+      table.tasks[taskIndex] = { ...task, days }
       setTables(newTables)
-      await fetch("/api/important", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: Number(task.id),
-          text: task.text,
-          numerator: task.numerator,
-          denominator: task.denominator,
-          days_remaining: days,
-        }),
-      })
+      if (table.title === "Importantes") {
+        await fetch("/api/important", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: Number(task.id),
+            text: task.text,
+            numerator: task.numerator,
+            denominator: task.denominator,
+            days_remaining: days,
+          }),
+        })
+      } else {
+        await fetch("/api/subjects", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: task.text,
+            ...(table.title === "Teoría"
+              ? { theory_date: `${days}d` }
+              : { practice_date: `${days}d` }),
+          }),
+        })
+      }
     }
   }
 
@@ -478,12 +514,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         <div
           className={`space-y-3 transition-all duration-300 ${isTransitioning ? "opacity-0 transform translate-x-4" : "opacity-100 transform translate-x-0"}`}
         >
-          {currentTable.tasks.map((task) => {
-            const daysRemaining =
-              currentTable.title === "Importantes"
-                ? task.days || 0
-                : calculateDaysRemaining(task.text, currentTable.title as "Teoría" | "Práctica")
-            const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
+            {currentTable.tasks.map((task) => {
+              const daysRemaining =
+                task.days !== undefined
+                  ? task.days
+                  : calculateDaysRemaining(task.text, currentTable.title as "Teoría" | "Práctica")
+              const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
             const currentPercentage = getProgressPercentage(task.numerator, task.denominator)
             const averagePercentage = calculateAveragePercentage()
             const isBelowAverage = currentPercentage < averagePercentage
@@ -497,36 +533,34 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 onMouseEnter={() => setHoveredTaskId(task.id)}
                 onMouseLeave={() => setHoveredTaskId(null)}
               >
-                <div
-                  className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
-                  onClick={() => {
-                    if (currentTable.title === "Importantes") {
+                  <div
+                    className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
+                    onClick={() => {
                       setEditingDaysId(task.id)
-                      setEditDaysValue(String(task.days || 0))
-                    }
-                  }}
-                >
-                  <IconComponent className={`h-3 w-3 ${iconColor}`} />
-                  {currentTable.title === "Importantes" && editingDaysId === task.id ? (
-                    <Input
-                      value={editDaysValue}
-                      onChange={(e) => setEditDaysValue(e.target.value)}
-                      onBlur={() => {
-                        updateDays(task.id, Number.parseInt(editDaysValue) || 0)
-                        setEditingDaysId(null)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                      setEditDaysValue(String(daysRemaining))
+                    }}
+                  >
+                    <IconComponent className={`h-3 w-3 ${iconColor}`} />
+                    {editingDaysId === task.id ? (
+                      <Input
+                        value={editDaysValue}
+                        onChange={(e) => setEditDaysValue(e.target.value)}
+                        onBlur={() => {
                           updateDays(task.id, Number.parseInt(editDaysValue) || 0)
                           setEditingDaysId(null)
-                        }
-                      }}
-                      className="w-10 h-4 text-black text-center bg-white rounded"
-                    />
-                  ) : (
-                    <span>{daysRemaining}d</span>
-                  )}
-                </div>
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            updateDays(task.id, Number.parseInt(editDaysValue) || 0)
+                            setEditingDaysId(null)
+                          }
+                        }}
+                        className="w-10 h-4 text-black text-center bg-white rounded"
+                      />
+                    ) : (
+                      <span>{daysRemaining}d</span>
+                    )}
+                  </div>
 
                 <div
                   className="absolute inset-0 bg-gradient-to-r from-green-200 to-green-400 transition-all duration-300 ease-out"

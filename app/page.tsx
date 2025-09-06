@@ -54,7 +54,7 @@ export default function PDFManager() {
   const loadDataFromDatabase = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("/api/subjects")
+      const response = await fetch("/api/subjects", { cache: "no-store" })
       if (response.ok) {
         const subjects = await response.json()
 
@@ -121,13 +121,21 @@ export default function PDFManager() {
   const generateFixedDates = () => {
     const updatedCategories = categories.map((category) => {
       const schedule = FIXED_SCHEDULE[category.name as keyof typeof FIXED_SCHEDULE]
-      const theoryDays = calculateDaysRemaining(schedule.theory)
-      const practiceDays = calculateDaysRemaining(schedule.practice)
+
+      const theoryDate =
+        category.theoryDate !== undefined
+          ? category.theoryDate
+          : `${calculateDaysRemaining(schedule.theory)}d`
+
+      const practiceDate =
+        category.practiceDate !== undefined
+          ? category.practiceDate
+          : `${calculateDaysRemaining(schedule.practice)}d`
 
       return {
         ...category,
-        theoryDate: `${theoryDays}d`,
-        practiceDate: `${practiceDays}d`,
+        theoryDate,
+        practiceDate,
       }
     })
 
