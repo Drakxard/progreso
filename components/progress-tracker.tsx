@@ -205,6 +205,37 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
+  const loadSubjectDaysFromDatabase = async () => {
+    try {
+      setIsLoading(true)
+      const response = await fetch("/api/subjects", { cache: "no-store" })
+      if (response.ok) {
+        const subjects = await response.json()
+        setTables((prevTables) =>
+          prevTables.map((table) => {
+            if (table.title === "Importantes") return table
+            const key = table.title === "Teoría" ? "theory_date" : "practice_date"
+            return {
+              ...table,
+              tasks: table.tasks.map((task) => {
+                const subject = subjects.find((s: any) => s.name === task.text)
+                const daysValue = subject ? subject[key] : undefined
+                return {
+                  ...task,
+                  days: daysValue ? Number.parseInt(daysValue) : task.days,
+                }
+              }),
+            }
+          }),
+        )
+      }
+    } catch (error) {
+      console.error("Error loading subject days:", error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const saveProgressToDatabase = async (
     subjectName: string,
     tableType: "Teoría" | "Práctica",
@@ -248,6 +279,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const fetchData = async () => {
       await loadProgressFromDatabase()
       await loadImportantFromDatabase()
+      await loadSubjectDaysFromDatabase()
     }
     fetchData()
   }, [])
