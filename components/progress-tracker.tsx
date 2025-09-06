@@ -332,23 +332,26 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   }
 
   const updateDays = async (id: string, days: number) => {
+    const table = tables[currentTableIndex]
     const newTables = [...tables]
-    const taskIndex = newTables[currentTableIndex].tasks.findIndex((task) => task.id === id)
+    const taskIndex = table.tasks.findIndex((task) => task.id === id)
     if (taskIndex !== -1) {
-      const task = newTables[currentTableIndex].tasks[taskIndex]
+      const task = table.tasks[taskIndex]
       newTables[currentTableIndex].tasks[taskIndex] = { ...task, days }
       setTables(newTables)
-      await fetch("/api/important", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: Number(task.id),
-          text: task.text,
-          numerator: task.numerator,
-          denominator: task.denominator,
-          days_remaining: days,
-        }),
-      })
+      if (table.title === "Importantes") {
+        await fetch("/api/important", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: Number(task.id),
+            text: task.text,
+            numerator: task.numerator,
+            denominator: task.denominator,
+            days_remaining: days,
+          }),
+        })
+      }
     }
   }
 
@@ -480,9 +483,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         >
           {currentTable.tasks.map((task) => {
             const daysRemaining =
-              currentTable.title === "Importantes"
-                ? task.days || 0
-                : calculateDaysRemaining(task.text, currentTable.title as "Teoría" | "Práctica")
+              task.days ??
+              (currentTable.title === "Importantes"
+                ? 0
+                : calculateDaysRemaining(task.text, currentTable.title as "Teoría" | "Práctica"))
             const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
             const currentPercentage = getProgressPercentage(task.numerator, task.denominator)
             const averagePercentage = calculateAveragePercentage()
@@ -500,14 +504,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 <div
                   className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
                   onClick={() => {
-                    if (currentTable.title === "Importantes") {
-                      setEditingDaysId(task.id)
-                      setEditDaysValue(String(task.days || 0))
-                    }
+                    setEditingDaysId(task.id)
+                    setEditDaysValue(String(daysRemaining))
                   }}
                 >
                   <IconComponent className={`h-3 w-3 ${iconColor}`} />
-                  {currentTable.title === "Importantes" && editingDaysId === task.id ? (
+                  {editingDaysId === task.id ? (
                     <Input
                       value={editDaysValue}
                       onChange={(e) => setEditDaysValue(e.target.value)}
