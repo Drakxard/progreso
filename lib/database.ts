@@ -101,8 +101,24 @@ export async function updateProgress(
 
 export async function getImportantTasks(): Promise<ImportantTask[]> {
   await ensureImportantTasksTable()
-  const result = await sql`SELECT * FROM important_tasks ORDER BY id`
-  return result as ImportantTask[]
+  const result = await sql<ImportantTask[]>`SELECT * FROM important_tasks ORDER BY id`
+
+  const now = new Date()
+  for (const task of result) {
+    if (task.days_remaining > 0) {
+      const updatedAt = new Date(task.updated_at)
+      const daysElapsed = Math.floor(
+        (now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60 * 24),
+      )
+      if (daysElapsed > 0) {
+        const newRemaining = Math.max(task.days_remaining - daysElapsed, 0)
+        await sql`UPDATE important_tasks SET days_remaining = ${newRemaining}, updated_at = CURRENT_TIMESTAMP WHERE id = ${task.id}`
+        task.days_remaining = newRemaining
+      }
+    }
+  }
+
+  return result
 }
 
 export async function createImportantTask(
