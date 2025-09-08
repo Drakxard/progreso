@@ -129,10 +129,10 @@ export async function updateImportantTask(
   await ensureImportantTasksTable()
   const result = await sql<ImportantTask[]>`
     UPDATE important_tasks
-    SET text = ${data.text ?? ""},
-        numerator = ${data.numerator ?? 0},
-        denominator = ${data.denominator ?? 1},
-        days_remaining = ${data.days_remaining ?? 0},
+    SET text = COALESCE(${data.text}, text),
+        numerator = COALESCE(${data.numerator}, numerator),
+        denominator = COALESCE(${data.denominator}, denominator),
+        days_remaining = COALESCE(${data.days_remaining}, days_remaining),
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ${id}
     RETURNING *
