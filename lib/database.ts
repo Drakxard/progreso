@@ -127,16 +127,35 @@ export async function updateImportantTask(
   data: Partial<ImportantTask>,
 ): Promise<ImportantTask | null> {
   await ensureImportantTasksTable()
-  const result = await sql<ImportantTask[]>`
-    UPDATE important_tasks
-    SET text = ${data.text ?? ""},
-        numerator = ${data.numerator ?? 0},
-        denominator = ${data.denominator ?? 1},
-        days_remaining = ${data.days_remaining ?? 0},
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ${id}
-    RETURNING *
-  `
+  const updates = []
+  const values: any[] = []
+  let paramIndex = 1
+
+  if (data.text !== undefined) {
+    updates.push(`text = $${paramIndex++}`)
+    values.push(data.text)
+  }
+  if (data.numerator !== undefined) {
+    updates.push(`numerator = $${paramIndex++}`)
+    values.push(data.numerator)
+  }
+  if (data.denominator !== undefined) {
+    updates.push(`denominator = $${paramIndex++}`)
+    values.push(data.denominator)
+  }
+  if (data.days_remaining !== undefined) {
+    updates.push(`days_remaining = $${paramIndex++}`)
+    values.push(data.days_remaining)
+  }
+
+  if (updates.length === 0) return null
+
+  updates.push(`updated_at = CURRENT_TIMESTAMP`)
+
+  const query = `UPDATE important_tasks SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING *`
+  values.push(id)
+
+  const result = await sql<ImportantTask[]>(query, values)
   return result[0] ?? null
 }
 
