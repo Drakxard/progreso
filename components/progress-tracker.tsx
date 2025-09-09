@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, X } from "lucide-react"
@@ -46,6 +46,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   >([])
   const [eventIndex, setEventIndex] = useState(0)
   const [eventZoom, setEventZoom] = useState(2)
+  const [isCalendarMode, setIsCalendarMode] = useState(false)
+  const [calendarDate, setCalendarDate] = useState(new Date())
 
   useEffect(() => {
     const stored = localStorage.getItem("eventZoom")
@@ -119,6 +121,55 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       tasks: [],
     },
   ])
+
+  const calendarEvents = useMemo(() => {
+    const events: { date: Date; label: string; color: string }[] = []
+
+    const teoriaTasks = tables.find((t) => t.title === "Teoría")?.tasks || []
+    const practicaTasks = tables.find((t) => t.title === "Práctica")?.tasks || []
+
+    initialData.forEach((subject) => {
+      if (subject.theoryDate) {
+        const tTask = teoriaTasks.find((t) => t.text === subject.name)
+        const remaining = tTask ? tTask.denominator - tTask.numerator : undefined
+        events.push({
+          date: new Date(subject.theoryDate),
+          label: `${subject.name} teoría${
+            remaining !== undefined ? ` (${remaining})` : ""
+          }`,
+          color: "bg-blue-500",
+        })
+      }
+      if (subject.practiceDate) {
+        const pTask = practicaTasks.find((t) => t.text === subject.name)
+        const remaining = pTask ? pTask.denominator - pTask.numerator : undefined
+        events.push({
+          date: new Date(subject.practiceDate),
+          label: `${subject.name} práctica${
+            remaining !== undefined ? ` (${remaining})` : ""
+          }`,
+          color: "bg-green-500",
+        })
+      }
+    })
+
+    const today = new Date()
+    tables
+      .find((t) => t.title === "Importantes")
+      ?.tasks.forEach((task) => {
+        if (task.days !== undefined && task.days >= 0) {
+          const due = new Date(today)
+          due.setDate(due.getDate() + (task.days || 0))
+          events.push({
+            date: due,
+            label: `${task.text} (${task.days}d)` ,
+            color: "bg-orange-500",
+          })
+        }
+      })
+
+    return events
+  }, [tables, initialData])
 
   const saveTopicsToLocalStorage = (tables: Table[]) => {
     const topicsData: Record<string, string[]> = {}
@@ -248,6 +299,25 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === "c" && !editingId && !editingDaysId) {
+        event.preventDefault()
+        setIsCalendarMode((prev) => !prev)
+        return
+      }
+      if (isCalendarMode) {
+        if (event.key === "ArrowRight") {
+          event.preventDefault()
+          setCalendarDate(
+            (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+          )
+        } else if (event.key === "ArrowLeft") {
+          event.preventDefault()
+          setCalendarDate(
+            (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
+          )
+        }
+        return
+      }
       if (event.key.toLowerCase() === "i" && !editingId && !editingDaysId) {
         event.preventDefault()
         if (isEventMode) {
@@ -308,7 +378,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isEventMode, editingId, editingDaysId, tables, eventTasks])
+  }, [isEventMode, editingId, editingDaysId, tables, eventTasks, isCalendarMode])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -551,6 +621,54 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
+  const renderCalendarCells = () => {
+    const year = calendarDate.getFullYear()
+    const month = calendarDate.getMonth()
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+    const startDay = new Date(year, month, 1).getDay()
+    const cells = []
+    const today = new Date()
+
+    for (let i = 0; i < startDay; i++) {
+      cells.push(<div key={`empty-${i}`} />)
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dayEvents = calendarEvents.filter(
+        (e) =>
+          e.date.getFullYear() === year &&
+          e.date.getMonth() === month &&
+          e.date.getDate() === day,
+      )
+      const isToday =
+        year === today.getFullYear() &&
+        month === today.getMonth() &&
+        day === today.getDate()
+
+      cells.push(
+        <div
+          key={day}
+          className={`border h-24 p-1 overflow-hidden ${
+            isToday ? "bg-blue-200 dark:bg-blue-900" : ""
+          }`}
+        >
+          <div className="text-[10px] font-bold">{day}</div>
+          <div className="space-y-1 mt-1">
+            {dayEvents.map((ev, idx) => (
+              <div
+                key={idx}
+                className={`text-[9px] text-white px-1 rounded ${ev.color}`}
+              >
+                {ev.label}
+              </div>
+            ))}
+          </div>
+        </div>,
+      )
+    }
+    return cells
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -562,7 +680,52 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     )
   }
 
-if (isEventMode && eventTasks.length > 0) {
+  if (isCalendarMode) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="bg-card p-4 rounded-lg shadow-lg w-full max-w-3xl">
+          <div className="flex items-center justify-between mb-4">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() =>
+                setCalendarDate(
+                  (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
+                )
+              }
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <h2 className="text-xl font-bold capitalize">
+              {calendarDate.toLocaleString("es-ES", { month: "long" })}{" "}
+              {calendarDate.getFullYear()}
+            </h2>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() =>
+                setCalendarDate(
+                  (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+                )
+              }
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-7 gap-2 text-xs text-center mb-2">
+            {["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"].map((d) => (
+              <div key={d} className="font-semibold">
+                {d}
+              </div>
+            ))}
+            {renderCalendarCells()}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (isEventMode && eventTasks.length > 0) {
     const current = eventTasks[eventIndex]
     const { task, tableTitle, daysRemaining } = current
     const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
