@@ -39,7 +39,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [topicInputs, setTopicInputs] = useState<Record<string, string>>({})
-
+ 
   const [isEventMode, setIsEventMode] = useState(false)
   const [eventTasks, setEventTasks] = useState<
     { task: TaskItem; tableTitle: string; daysRemaining: number }[]
@@ -271,7 +271,6 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         }
         return
       }
-
       if (isEventMode) {
         if (event.ctrlKey && (event.key === "+" || event.key === "=")) {
           event.preventDefault()
@@ -563,7 +562,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     )
   }
 
-  if (isEventMode && eventTasks.length > 0) {
+if (isEventMode && eventTasks.length > 0) {
     const current = eventTasks[eventIndex]
     const { task, tableTitle, daysRemaining } = current
     const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
