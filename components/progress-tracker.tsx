@@ -39,6 +39,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [topicInputs, setTopicInputs] = useState<Record<string, string>>({})
+  const [isUpcomingMode, setIsUpcomingMode] = useState(false)
+  const [upcomingTasks, setUpcomingTasks] = useState<
+    { tableTitle: string; task: TaskItem; daysRemaining: number }[]
+  >([])
+  const [upcomingIndex, setUpcomingIndex] = useState(0)
 
   const [tables, setTables] = useState<Table[]>([
     {
@@ -227,18 +232,47 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "ArrowLeft") {
+      const target = event.target as HTMLElement
+      if (
+        editingId ||
+        editingDaysId ||
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return
+      }
+
+      if (event.key.toLowerCase() === "i") {
         event.preventDefault()
-        goToPreviousTable()
-      } else if (event.key === "ArrowRight") {
-        event.preventDefault()
-        goToNextTable()
+        setIsUpcomingMode((prev) => {
+          const next = !prev
+          if (!prev) {
+            refreshUpcomingTasks()
+          }
+          return next
+        })
+      } else if (isUpcomingMode) {
+        if (event.key === "ArrowRight") {
+          event.preventDefault()
+          setUpcomingIndex((prev) =>
+            upcomingTasks.length > 0 ? (prev + 1) % upcomingTasks.length : 0,
+          )
+        }
+      } else {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault()
+          goToPreviousTable()
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault()
+          goToNextTable()
+        }
       }
     }
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [])
+  }, [editingId, editingDaysId, isUpcomingMode, upcomingTasks.length])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -322,6 +356,23 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
 
     return pdfsNeeded
+  }
+
+  const getDaysRemaining = (task: TaskItem) => {
+    return task.days !== undefined ? task.days : task.denominator - task.numerator
+  }
+
+  const refreshUpcomingTasks = () => {
+    const allTasks = tables.flatMap((table) =>
+      table.tasks.map((task) => ({
+        tableTitle: table.title,
+        task,
+        daysRemaining: getDaysRemaining(task),
+      })),
+    )
+    const sorted = allTasks.sort((a, b) => a.daysRemaining - b.daysRemaining)
+    setUpcomingTasks(sorted)
+    setUpcomingIndex(0)
   }
 
   const updateDays = async (id: string, days: number) => {
@@ -487,6 +538,41 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-muted-foreground">Cargando progreso...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (isUpcomingMode && upcomingTasks.length > 0) {
+    const upcoming = upcomingTasks[upcomingIndex]
+    const { icon: Icon, bgColor, iconColor } = getIconAndColor(upcoming.daysRemaining)
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-full max-w-md">
+          <div className="mb-4 text-center text-lg font-bold">{upcoming.tableTitle}</div>
+          <div className="relative rounded-xl overflow-hidden shadow-lg">
+            <div className={`absolute inset-0 bg-gradient-to-br ${bgColor} opacity-90`}></div>
+            <div className="relative z-10 flex items-center gap-4 p-4">
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm">
+                <Icon className={`h-6 w-6 ${iconColor}`} />
+              </div>
+              <div className="flex-1 text-white font-bold">{upcoming.task.text}</div>
+              <div className="text-white font-bold">{upcoming.daysRemaining}d</div>
+            </div>
+            <div className="relative z-10 p-4">
+              <div className="h-2 bg-white/20 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-white"
+                  style={{
+                    width: `${getProgressPercentage(
+                      upcoming.task.numerator,
+                      upcoming.task.denominator,
+                    )}%`,
+                  }}
+                ></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     )
