@@ -40,6 +40,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [topicInputs, setTopicInputs] = useState<Record<string, string>>({})
 
+  const [isEventMode, setIsEventMode] = useState(false)
+  const [eventTasks, setEventTasks] = useState<
+    { task: TaskItem; tableTitle: string; daysRemaining: number }[]
+  >([])
+  const [eventIndex, setEventIndex] = useState(0)
+
   const [tables, setTables] = useState<Table[]>([
     {
       title: "Teoría",
@@ -227,6 +233,47 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === "i" && !editingId && !editingDaysId) {
+        event.preventDefault()
+        if (isEventMode) {
+          setIsEventMode(false)
+        } else {
+          const tasks = tables
+            .flatMap((table) =>
+              table.tasks.map((task) => ({
+                task,
+                tableTitle: table.title,
+                daysRemaining:
+                  table.title === "Importantes"
+                    ? task.days || 0
+                    : task.denominator - task.numerator,
+              })),
+            )
+            .sort((a, b) => a.daysRemaining - b.daysRemaining)
+          setEventTasks(tasks)
+          setEventIndex(0)
+          setIsEventMode(true)
+        }
+        return
+      }
+
+      if (isEventMode) {
+        if (event.key === "ArrowRight") {
+          event.preventDefault()
+          setEventIndex((prev) =>
+            eventTasks.length ? (prev + 1) % eventTasks.length : 0,
+          )
+        } else if (event.key === "ArrowLeft") {
+          event.preventDefault()
+          setEventIndex((prev) =>
+            eventTasks.length
+              ? (prev - 1 + eventTasks.length) % eventTasks.length
+              : 0,
+          )
+        }
+        return
+      }
+
       if (event.key === "ArrowLeft") {
         event.preventDefault()
         goToPreviousTable()
@@ -238,7 +285,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [])
+  }, [isEventMode, editingId, editingDaysId, tables, eventTasks])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -487,6 +534,43 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-muted-foreground">Cargando progreso...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (isEventMode && eventTasks.length > 0) {
+    const current = eventTasks[eventIndex]
+    const { task, tableTitle, daysRemaining } = current
+    const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
+
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="relative overflow-hidden bg-card border rounded-lg shadow-sm w-full max-w-md">
+          <div
+            className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
+          >
+            <IconComponent className={`h-3 w-3 ${iconColor}`} />
+            <span>{daysRemaining}d</span>
+          </div>
+
+          <div
+            className="absolute inset-0 bg-gradient-to-r from-green-200 to-green-400 transition-all duration-300 ease-out"
+            style={{ width: `${getProgressPercentage(task.numerator, task.denominator)}%` }}
+          />
+
+          <div className="relative z-10 flex items-center gap-4 p-6">
+            <div className="flex-1 p-3 text-foreground">{task.text}</div>
+            <div className="text-sm text-muted-foreground font-medium shrink-0">
+              {task.denominator - daysRemaining}/{task.denominator}
+            </div>
+            <div className="text-sm text-muted-foreground font-medium shrink-0 w-12 text-right">
+              {Math.round(getProgressPercentage(task.numerator, task.denominator))}%
+            </div>
+          </div>
+          <div className="absolute bottom-2 left-3 text-xs text-muted-foreground">
+            {tableTitle}
+          </div>
         </div>
       </div>
     )
