@@ -39,12 +39,27 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [topicInputs, setTopicInputs] = useState<Record<string, string>>({})
-
+ 
   const [isEventMode, setIsEventMode] = useState(false)
   const [eventTasks, setEventTasks] = useState<
     { task: TaskItem; tableTitle: string; daysRemaining: number }[]
   >([])
   const [eventIndex, setEventIndex] = useState(0)
+  const [eventZoom, setEventZoom] = useState(2)
+
+  useEffect(() => {
+    const stored = localStorage.getItem("eventZoom")
+    if (stored) {
+      const value = parseFloat(stored)
+      if (!isNaN(value)) {
+        setEventZoom(value)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem("eventZoom", eventZoom.toString())
+  }, [eventZoom])
 
   const [tables, setTables] = useState<Table[]>([
     {
@@ -256,9 +271,17 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         }
         return
       }
-
       if (isEventMode) {
-        if (event.key === "ArrowRight") {
+        if (event.ctrlKey && (event.key === "+" || event.key === "=")) {
+          event.preventDefault()
+          setEventZoom((prev) => Math.min(prev + 0.1, 3))
+        } else if (event.ctrlKey && (event.key === "-" || event.key === "_")) {
+          event.preventDefault()
+          setEventZoom((prev) => Math.max(prev - 0.1, 0.5))
+        } else if (event.ctrlKey && event.key === "0") {
+          event.preventDefault()
+          setEventZoom(2)
+        } else if (event.key === "ArrowRight") {
           event.preventDefault()
           setEventIndex((prev) =>
             eventTasks.length ? (prev + 1) % eventTasks.length : 0,
@@ -539,14 +562,17 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     )
   }
 
-  if (isEventMode && eventTasks.length > 0) {
+if (isEventMode && eventTasks.length > 0) {
     const current = eventTasks[eventIndex]
     const { task, tableTitle, daysRemaining } = current
     const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
 
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="relative overflow-hidden bg-card border rounded-lg shadow-sm w-full max-w-md">
+        <div
+          className="relative overflow-hidden bg-card border rounded-lg shadow-sm w-full max-w-md"
+          style={{ transform: `scale(${eventZoom})`, transformOrigin: "center" }}
+        >
           <div
             className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
           >
