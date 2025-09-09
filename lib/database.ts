@@ -101,9 +101,40 @@ export async function updateProgress(
 
 export async function getImportantTasks(): Promise<ImportantTask[]> {
   await ensureImportantTasksTable()
-  const result = await sql`SELECT * FROM important_tasks ORDER BY id`
-  return result as ImportantTask[]
+  const tasks = await sql<ImportantTask[]>`SELECT * FROM important_tasks ORDER BY id`
+  const today = new Date()
+  const updatedTasks = await Promise.all(
+    tasks.map(async (task) => {
+      const lastUpdate = new Date(task.updated_at)
+      const diffTime = today.getTime() - lastUpdate.getTime()
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+      if (diffDays > 0) {
+        const newDaysRemaining = Math.max(task.days_remaining - diffDays, 0)
+        const newNumerator = Math.min(
+          task.denominator,
+          task.denominator - newDaysRemaining,
+        )
+        const updated = await updateImportantTask(task.id, {
+          days_remaining: newDaysRemaining,
+          numerator: newNumerator,
+        })
+        return (
+          updated ?? {
+            ...task,
+            days_remaining: newDaysRemaining,
+            numerator: newNumerator,
+          }
+  )
+      return task
+    }),
+  )
+  return updatedTasks
 }
+
+// Ensure the important tasks table exists on startup
+ensureImportantTasksTable().catch((e) =>
+  console.error("Error ensuring important_tasks table:", e),
+)
 
 export async function createImportantTask(
   data: Partial<ImportantTask>,
