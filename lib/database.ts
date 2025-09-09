@@ -124,13 +124,17 @@ export async function getImportantTasks(): Promise<ImportantTask[]> {
             days_remaining: newDaysRemaining,
             numerator: newNumerator,
           }
-        )
-      }
+  )
       return task
     }),
   )
   return updatedTasks
 }
+
+// Ensure the important tasks table exists on startup
+ensureImportantTasksTable().catch((e) =>
+  console.error("Error ensuring important_tasks table:", e),
+)
 
 export async function createImportantTask(
   data: Partial<ImportantTask>,

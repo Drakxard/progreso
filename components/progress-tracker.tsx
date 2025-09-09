@@ -124,22 +124,30 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   const calendarEvents = useMemo(() => {
     const events: { date: Date; label: string; color: string }[] = []
+    const theoryTasks = tables.find((t) => t.title === "Teoría")?.tasks || []
+    const practiceTasks = tables.find((t) => t.title === "Práctica")?.tasks || []
+
     initialData.forEach((subject) => {
       if (subject.theoryDate) {
+        const task = theoryTasks.find((t) => t.text === subject.name)
+        const remaining = task ? task.denominator - task.numerator : 0
         events.push({
           date: new Date(subject.theoryDate),
-          label: `${subject.name} teoría`,
+          label: `${subject.name} teoría (${remaining})`,
           color: "bg-blue-500",
         })
       }
       if (subject.practiceDate) {
+        const task = practiceTasks.find((t) => t.text === subject.name)
+        const remaining = task ? task.denominator - task.numerator : 0
         events.push({
           date: new Date(subject.practiceDate),
-          label: `${subject.name} práctica`,
+          label: `${subject.name} práctica (${remaining})`,
           color: "bg-green-500",
         })
       }
     })
+
     const today = new Date()
     tables
       .find((t) => t.title === "Importantes")
@@ -149,7 +157,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           due.setDate(due.getDate() + (task.days || 0))
           events.push({
             date: due,
-            label: task.text,
+            label: `${task.text} (${task.days}d)`,
             color: "bg-orange-500",
           })
         }
@@ -616,6 +624,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     for (let i = 0; i < startDay; i++) {
       cells.push(<div key={`empty-${i}`} />)
     }
+    const today = new Date()
     for (let day = 1; day <= daysInMonth; day++) {
       const dayEvents = calendarEvents.filter(
         (e) =>
@@ -623,8 +632,17 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           e.date.getMonth() === month &&
           e.date.getDate() === day,
       )
+      const isToday =
+        today.getFullYear() === year &&
+        today.getMonth() === month &&
+        today.getDate() === day
       cells.push(
-        <div key={day} className="border h-24 p-1 overflow-hidden">
+        <div
+          key={day}
+          className={`border h-24 p-1 overflow-hidden ${
+            isToday ? "bg-blue-100" : ""
+          }`}
+        >
           <div className="text-[10px] font-bold">{day}</div>
           <div className="space-y-1 mt-1">
             {dayEvents.map((ev, idx) => (
