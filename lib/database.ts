@@ -16,6 +16,13 @@ async function ensureImportantTasksTable() {
   `
 }
 
+// Ensure the table exists when the module is loaded so important tasks persist
+if (process.env.DATABASE_URL) {
+  ensureImportantTasksTable().catch((e) =>
+    console.error("Error ensuring important_tasks table", e),
+  )
+}
+
 export interface Subject {
   id: number
   name: string

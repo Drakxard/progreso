@@ -46,6 +46,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   >([])
   const [eventIndex, setEventIndex] = useState(0)
   const [eventZoom, setEventZoom] = useState(2)
+  const [isCalendarView, setIsCalendarView] = useState(false)
+  const [calendarDate, setCalendarDate] = useState(new Date())
+  const tableColors: Record<string, string> = {
+    "Teoría": "bg-blue-500",
+    "Práctica": "bg-green-500",
+    Importantes: "bg-red-500",
+  }
 
   useEffect(() => {
     const stored = localStorage.getItem("eventZoom")
@@ -248,6 +255,26 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === "c" && !editingId && !editingDaysId) {
+        event.preventDefault()
+        setIsCalendarView((prev) => !prev)
+        return
+      }
+      if (isCalendarView) {
+        if (event.key === "ArrowRight") {
+          event.preventDefault()
+          setCalendarDate((prev) =>
+            new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+          )
+        } else if (event.key === "ArrowLeft") {
+          event.preventDefault()
+          setCalendarDate((prev) =>
+            new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
+          )
+        }
+        return
+      }
+
       if (event.key.toLowerCase() === "i" && !editingId && !editingDaysId) {
         event.preventDefault()
         if (isEventMode) {
@@ -308,7 +335,14 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isEventMode, editingId, editingDaysId, tables, eventTasks])
+  }, [
+    isEventMode,
+    editingId,
+    editingDaysId,
+    tables,
+    eventTasks,
+    isCalendarView,
+  ])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -513,6 +547,51 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     })
   }
 
+  const generateCalendarDays = () => {
+    const start = new Date(
+      calendarDate.getFullYear(),
+      calendarDate.getMonth(),
+      1,
+    )
+    const end = new Date(
+      calendarDate.getFullYear(),
+      calendarDate.getMonth() + 1,
+      0,
+    )
+    const days: (number | null)[] = []
+    for (let i = 0; i < start.getDay(); i++) days.push(null)
+    for (let d = 1; d <= end.getDate(); d++) days.push(d)
+    return days
+  }
+
+  const getTasksForDate = (day: number) => {
+    const target = new Date(
+      calendarDate.getFullYear(),
+      calendarDate.getMonth(),
+      day,
+    )
+    const events: { color: string; text: string }[] = []
+    tables.forEach((table) => {
+      table.tasks.forEach((task) => {
+        const daysRemaining =
+          table.title === "Importantes"
+            ? task.days || 0
+            : task.denominator - task.numerator
+        const due = new Date()
+        due.setDate(due.getDate() + daysRemaining)
+        if (
+          due.getFullYear() === target.getFullYear() &&
+          due.getMonth() === target.getMonth() &&
+          due.getDate() === target.getDate()
+        ) {
+          const color = tableColors[table.title] || "bg-gray-400"
+          events.push({ color, text: task.text })
+        }
+      })
+    })
+    return events
+  }
+
   const goToPreviousTable = () => {
     setIsTransitioning(true)
     setTimeout(() => {
@@ -557,6 +636,76 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-muted-foreground">Cargando progreso...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (isCalendarView) {
+    const days = generateCalendarDays()
+    return (
+      <div className="min-h-screen bg-background p-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center justify-between mb-4">
+            <Button
+              onClick={() =>
+                setCalendarDate(
+                  new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1),
+                )
+              }
+              variant="outline"
+              size="icon"
+              className="bg-transparent"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <h2 className="text-xl font-bold capitalize">
+              {calendarDate.toLocaleString("es-ES", {
+                month: "long",
+                year: "numeric",
+              })}
+            </h2>
+            <Button
+              onClick={() =>
+                setCalendarDate(
+                  new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1),
+                )
+              }
+              variant="outline"
+              size="icon"
+              className="bg-transparent"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-7 gap-2 text-center text-sm font-medium mb-2">
+            {["D", "L", "M", "M", "J", "V", "S"].map((d) => (
+              <div key={d}>{d}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-2">
+            {days.map((day, idx) => (
+              <div
+                key={idx}
+                className="border rounded-lg h-24 p-1 text-xs overflow-hidden"
+              >
+                {day && (
+                  <>
+                    <div className="text-right">{day}</div>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {getTasksForDate(day).map((ev, i) => (
+                        <span
+                          key={i}
+                          className={`w-2 h-2 rounded-full ${ev.color}`}
+                          title={ev.text}
+                        ></span>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     )
