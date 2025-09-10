@@ -201,6 +201,28 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
+  const saveImportantToLocalStorage = (tables: Table[]) => {
+    const important = tables.find((t) => t.title === "Importantes")
+    if (important) {
+      localStorage.setItem("importantTasks", JSON.stringify(important.tasks))
+    }
+  }
+
+  const loadImportantFromLocalStorage = () => {
+    const stored = localStorage.getItem("importantTasks")
+    if (stored) {
+      const tasks = JSON.parse(stored) as TaskItem[]
+      setTables((prev) => {
+        const newTables = [...prev]
+        const index = newTables.findIndex((t) => t.title === "Importantes")
+        if (index !== -1) {
+          newTables[index] = { ...newTables[index], tasks }
+        }
+        return newTables
+      })
+    }
+  }
+
   const loadProgressFromDatabase = async () => {
     try {
       setIsLoading(true)
@@ -263,6 +285,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 }
               }),
             }
+            saveImportantToLocalStorage(newTables)
           }
           return newTables
         })
@@ -382,6 +405,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   useEffect(() => {
     const fetchData = async () => {
+      loadImportantFromLocalStorage()
       await loadProgressFromDatabase()
       await loadImportantFromDatabase()
       loadTopicsFromLocalStorage()
@@ -414,6 +438,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         }),
       })
     }
+
+    saveImportantToLocalStorage(newTables)
   }
 
   const getProgressPercentage = (numerator: number, denominator: number) => {
@@ -490,6 +516,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             days_remaining: days,
           }),
         })
+        saveImportantToLocalStorage(newTables)
       } else {
         const newNumerator = 7 - days
         newTables[currentTableIndex].tasks[taskIndex] = {
@@ -530,6 +557,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             denominator,
             topics: [],
           })
+          saveImportantToLocalStorage(newTables)
         }
         return newTables
       })
@@ -546,6 +574,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         const topics = task.topics || []
         tasks[taskIndex] = { ...task, topics: [...topics, topic.trim()] }
         saveTopicsToLocalStorage(newTables)
+        saveImportantToLocalStorage(newTables)
       }
       return newTables
     })
@@ -561,6 +590,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         const topics = task.topics || []
         tasks[taskIndex] = { ...task, topics: topics.filter((_, i) => i !== index) }
         saveTopicsToLocalStorage(newTables)
+        saveImportantToLocalStorage(newTables)
       }
       return newTables
     })
@@ -578,6 +608,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       if (index !== -1) {
         newTables[index].tasks = newTables[index].tasks.filter((t) => t.id !== id)
         saveTopicsToLocalStorage(newTables)
+        saveImportantToLocalStorage(newTables)
       }
       return newTables
     })
