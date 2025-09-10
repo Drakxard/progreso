@@ -281,7 +281,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
-  const loadImportantFromDatabase = async () => {
+  const loadImportantFromDatabase = async (): Promise<boolean> => {
     try {
       setIsLoading(true)
       const response = await fetch("/api/important", { cache: "no-store" })
@@ -294,7 +294,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             newTables[index] = {
               ...newTables[index],
               tasks: tasks.map((t: any) => {
-                const denominator = Math.max(t.denominator ?? 7, t.days_remaining ?? 0)
+                const denominator = Math.max(
+                  t.denominator ?? 7,
+                  t.days_remaining ?? 0,
+                )
                 const daysRemaining = t.days_remaining ?? denominator
                 const numerator = denominator - daysRemaining
                 return {
@@ -310,12 +313,14 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           }
           return newTables
         })
+        return Array.isArray(tasks) && tasks.length > 0
       }
     } catch (error) {
       console.error("Error loading important tasks:", error)
     } finally {
       setIsLoading(false)
     }
+    return false
   }
 
   const saveProgressToDatabase = async (
@@ -427,9 +432,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   useEffect(() => {
     const fetchData = async () => {
       await loadProgressFromDatabase()
-      await loadImportantFromDatabase()
+      const hasDbImportant = await loadImportantFromDatabase()
       loadTopicsFromLocalStorage()
-      loadImportantFromLocalStorage()
+      if (!hasDbImportant) {
+        loadImportantFromLocalStorage()
+      } else {
+        hasLoadedImportant.current = true
+      }
     }
     fetchData()
   }, [])
