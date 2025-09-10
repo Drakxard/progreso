@@ -426,10 +426,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   useEffect(() => {
     const fetchData = async () => {
+      loadImportantFromLocalStorage()
       await loadProgressFromDatabase()
       await loadImportantFromDatabase()
       loadTopicsFromLocalStorage()
-      loadImportantFromLocalStorage()
     }
     fetchData()
   }, [])
