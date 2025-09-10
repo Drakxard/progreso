@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, X } from "lucide-react"
@@ -122,6 +122,20 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     },
   ])
 
+  const hasLoadedImportant = useRef(false)
+
+  const parseDateInput = (input?: string): Date | null => {
+    if (!input) return null
+    if (/^\d+d$/.test(input)) {
+      const days = parseInt(input.slice(0, -1), 10)
+      const date = new Date()
+      date.setDate(date.getDate() + days)
+      return date
+    }
+    const date = new Date(input)
+    return isNaN(date.getTime()) ? null : date
+  }
+
   const calendarEvents = useMemo(() => {
     const events: { date: Date; label: string; color: string }[] = []
 
@@ -129,22 +143,24 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const practicaTasks = tables.find((t) => t.title === "Práctica")?.tasks || []
 
     initialData.forEach((subject) => {
-      if (subject.theoryDate) {
+      const theoryDate = parseDateInput(subject.theoryDate)
+      if (theoryDate) {
         const tTask = teoriaTasks.find((t) => t.text === subject.name)
         const remaining = tTask ? tTask.denominator - tTask.numerator : undefined
         events.push({
-          date: new Date(subject.theoryDate),
+          date: theoryDate,
           label: `${subject.name} teoría${
             remaining !== undefined ? ` (${remaining})` : ""
           }`,
           color: "bg-blue-500",
         })
       }
-      if (subject.practiceDate) {
+      const practiceDate = parseDateInput(subject.practiceDate)
+      if (practiceDate) {
         const pTask = practicaTasks.find((t) => t.text === subject.name)
         const remaining = pTask ? pTask.denominator - pTask.numerator : undefined
         events.push({
-          date: new Date(subject.practiceDate),
+          date: practiceDate,
           label: `${subject.name} práctica${
             remaining !== undefined ? ` (${remaining})` : ""
           }`,
@@ -200,6 +216,34 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       })
     }
   }
+
+  const saveImportantToLocalStorage = (tasks: TaskItem[]) => {
+    localStorage.setItem("importantTasks", JSON.stringify(tasks))
+  }
+
+  const loadImportantFromLocalStorage = () => {
+    const stored = localStorage.getItem("importantTasks")
+    if (stored) {
+      const tasks = JSON.parse(stored) as TaskItem[]
+      setTables((prev) => {
+        const newTables = [...prev]
+        const index = newTables.findIndex((t) => t.title === "Importantes")
+        if (index !== -1) {
+          newTables[index] = { ...newTables[index], tasks }
+        }
+        return newTables
+      })
+    }
+    hasLoadedImportant.current = true
+  }
+
+  useEffect(() => {
+    if (hasLoadedImportant.current) {
+      const important =
+        tables.find((t) => t.title === "Importantes")?.tasks ?? []
+      saveImportantToLocalStorage(important)
+    }
+  }, [tables])
 
   const loadProgressFromDatabase = async () => {
     try {
@@ -385,6 +429,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       await loadProgressFromDatabase()
       await loadImportantFromDatabase()
       loadTopicsFromLocalStorage()
+      loadImportantFromLocalStorage()
     }
     fetchData()
   }, [])
