@@ -323,6 +323,17 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return false
   }
 
+  const fetchData = async () => {
+    await loadProgressFromDatabase()
+    const hasDbImportant = await loadImportantFromDatabase()
+    loadTopicsFromLocalStorage()
+    if (!hasDbImportant) {
+      loadImportantFromLocalStorage()
+    } else {
+      hasLoadedImportant.current = true
+    }
+  }
+
   const saveProgressToDatabase = async (
     subjectName: string,
     tableType: "Teoría" | "Práctica",
@@ -348,6 +359,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === "q" && !editingId && !editingDaysId) {
+        event.preventDefault()
+        fetchData()
+        return
+      }
       if (event.key.toLowerCase() === "c" && !editingId && !editingDaysId) {
         event.preventDefault()
         setIsCalendarMode((prev) => !prev)
@@ -427,21 +443,29 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isEventMode, editingId, editingDaysId, tables, eventTasks, isCalendarMode])
+  }, [isEventMode, editingId, editingDaysId, tables, eventTasks, isCalendarMode, fetchData])
 
   useEffect(() => {
-    const fetchData = async () => {
-      await loadProgressFromDatabase()
-      const hasDbImportant = await loadImportantFromDatabase()
-      loadTopicsFromLocalStorage()
-      if (!hasDbImportant) {
-        loadImportantFromLocalStorage()
-      } else {
-        hasLoadedImportant.current = true
-      }
-    }
     fetchData()
   }, [])
+
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>
+    const scheduleMidnightUpdate = () => {
+      const now = new Date()
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+      const msUntilMidnight = nextMidnight.getTime() - now.getTime()
+      return setTimeout(() => {
+        fetchData()
+        interval = setInterval(fetchData, 24 * 60 * 60 * 1000)
+      }, msUntilMidnight)
+    }
+    const timeout = scheduleMidnightUpdate()
+    return () => {
+      clearTimeout(timeout)
+      if (interval) clearInterval(interval)
+    }
+  }, [fetchData])
 
   const currentTable = tables[currentTableIndex]
 
