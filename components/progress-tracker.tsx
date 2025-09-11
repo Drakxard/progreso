@@ -346,8 +346,42 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
+  const advanceDay = async () => {
+    setTables((prevTables) =>
+      prevTables.map((table) => {
+        if (table.title !== "Importantes") return table
+        const updatedTasks = table.tasks.map((task) => {
+          const newDays = Math.max((task.days ?? task.denominator) - 1, 0)
+          const newNumerator = Math.min(task.numerator + 1, task.denominator)
+          fetch("/api/important", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: Number(task.id),
+              days_remaining: newDays,
+              numerator: newNumerator,
+            }),
+          }).catch((err) => console.error("Error advancing day:", err))
+          return { ...task, days: newDays, numerator: newNumerator }
+        })
+        return { ...table, tasks: updatedTasks }
+      }),
+    )
+  }
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() === "q" &&
+        !editingId &&
+        !editingDaysId &&
+        !isEventMode &&
+        !isCalendarMode
+      ) {
+        event.preventDefault()
+        advanceDay()
+        return
+      }
       if (event.key.toLowerCase() === "c" && !editingId && !editingDaysId) {
         event.preventDefault()
         setIsCalendarMode((prev) => !prev)
@@ -428,6 +462,21 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [isEventMode, editingId, editingDaysId, tables, eventTasks, isCalendarMode])
+
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout>
+    const scheduleMidnight = () => {
+      const now = new Date()
+      const next = new Date(now)
+      next.setHours(24, 0, 0, 0)
+      timeoutId = setTimeout(() => {
+        advanceDay()
+        scheduleMidnight()
+      }, next.getTime() - now.getTime())
+    }
+    scheduleMidnight()
+    return () => clearTimeout(timeoutId)
+  }, [])
 
   useEffect(() => {
     const fetchData = async () => {
