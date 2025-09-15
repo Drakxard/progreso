@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, X } from "lucide-react"
@@ -32,13 +32,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [currentTableIndex, setCurrentTableIndex] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
-  const [editingDaysId, setEditingDaysId] = useState<string | null>(null)
-  const [editDaysValue, setEditDaysValue] = useState("")
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [showAverageLine, setShowAverageLine] = useState(false)
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [topicInputs, setTopicInputs] = useState<Record<string, string>>({})
+  const [subjectDeadlines, setSubjectDeadlines] = useState<Record<string, string>>({})
  
   const [isEventMode, setIsEventMode] = useState(false)
   const [eventTasks, setEventTasks] = useState<
@@ -127,6 +126,49 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   const hasLoadedImportant = useRef(false)
 
+  const makeSubjectKey = (tableTitle: string, subjectName: string) =>
+    `${tableTitle}|${subjectName}`
+
+  const subjectDataMap = useMemo(() => {
+    const map = new Map<string, (typeof initialData)[number]>()
+    initialData.forEach((subject) => {
+      map.set(subject.name, subject)
+    })
+    return map
+  }, [initialData])
+
+  useEffect(() => {
+    const nextDeadlines: Record<string, string> = {}
+    initialData.forEach((subject) => {
+      if (subject.theoryDate) {
+        nextDeadlines[makeSubjectKey("Teoría", subject.name)] = subject.theoryDate
+      }
+      if (subject.practiceDate) {
+        nextDeadlines[makeSubjectKey("Práctica", subject.name)] = subject.practiceDate
+      }
+    })
+    setSubjectDeadlines((prev) => ({ ...prev, ...nextDeadlines }))
+  }, [initialData])
+
+  const getSubjectDeadline = useCallback(
+    (tableTitle: string, subjectName: string) => {
+      const key = makeSubjectKey(tableTitle, subjectName)
+      if (subjectDeadlines[key]) {
+        return subjectDeadlines[key]
+      }
+      const subject = subjectDataMap.get(subjectName)
+      if (!subject) return undefined
+      if (tableTitle === "Teoría") {
+        return subject.theoryDate
+      }
+      if (tableTitle === "Práctica") {
+        return subject.practiceDate
+      }
+      return undefined
+    },
+    [subjectDeadlines, subjectDataMap],
+  )
+
   const parseDateInput = (input?: string): Date | null => {
     if (!input) return null
     if (/^\d+d$/.test(input)) {
@@ -139,6 +181,45 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return isNaN(date.getTime()) ? null : date
   }
 
+  const getNormalizedDaysUntil = (date: Date | null) => {
+    if (!date) return undefined
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const dueDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+    const diffMs = dueDate.getTime() - today.getTime()
+    return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
+  }
+
+  const getTaskDaysRemaining = useCallback(
+    (tableTitle: string, task: TaskItem) => {
+      if (tableTitle === "Importantes") {
+        return Math.max(0, task.days ?? 0)
+      }
+
+      const deadlineValue = getSubjectDeadline(tableTitle, task.text)
+      const dueDate = parseDateInput(deadlineValue)
+      const diffDays = getNormalizedDaysUntil(dueDate)
+      if (typeof diffDays === "number") {
+        return diffDays
+      }
+
+      return Math.max(0, task.denominator - task.numerator)
+    },
+    [getSubjectDeadline],
+  )
+
+  const buildEventTasks = useCallback(() => {
+    return tables
+      .flatMap((table) =>
+        table.tasks.map((task) => ({
+          task,
+          tableTitle: table.title,
+          daysRemaining: getTaskDaysRemaining(table.title, task),
+        })),
+      )
+      .sort((a, b) => a.daysRemaining - b.daysRemaining)
+  }, [tables, getTaskDaysRemaining])
+
   const calendarEvents = useMemo(() => {
     const events: { date: Date; label: string; color: string }[] = []
 
@@ -146,7 +227,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const practicaTasks = tables.find((t) => t.title === "Práctica")?.tasks || []
 
     initialData.forEach((subject) => {
-      const theoryDate = parseDateInput(subject.theoryDate)
+      const theoryDate = parseDateInput(
+        getSubjectDeadline("Teoría", subject.name),
+      )
       if (theoryDate) {
         const tTask = teoriaTasks.find((t) => t.text === subject.name)
         const remaining = tTask ? tTask.denominator - tTask.numerator : undefined
@@ -158,7 +241,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           color: "bg-blue-500",
         })
       }
-      const practiceDate = parseDateInput(subject.practiceDate)
+      const practiceDate = parseDateInput(
+        getSubjectDeadline("Práctica", subject.name),
+      )
       if (practiceDate) {
         const pTask = practicaTasks.find((t) => t.text === subject.name)
         const remaining = pTask ? pTask.denominator - pTask.numerator : undefined
@@ -188,7 +273,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       })
 
     return events
-  }, [tables, initialData])
+  }, [tables, initialData, getSubjectDeadline])
 
   const selectedCalendarTask = useMemo(() => {
     if (!calendarSelection) return null
@@ -203,6 +288,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       base.setHours(0, 0, 0, 0)
       base.setDate(base.getDate() + task.days)
       dueDate = base
+    } else if (table.title === "Teoría" || table.title === "Práctica") {
+      const rawDeadline = getSubjectDeadline(table.title, task.text)
+      const parsed = parseDateInput(rawDeadline)
+      if (parsed) {
+        dueDate = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate())
+      }
     }
 
     return {
@@ -210,7 +301,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       tableTitle: table.title,
       dueDate,
     }
-  }, [calendarSelection, tables])
+  }, [calendarSelection, tables, getSubjectDeadline])
 
   const saveTopicsToLocalStorage = (tables: Table[]) => {
     const topicsData: Record<string, string[]> = {}
@@ -371,9 +462,39 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
+  const formatDateToISO = (date: Date) => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, "0")
+    const day = String(date.getDate()).padStart(2, "0")
+    return `${year}-${month}-${day}`
+  }
+
+  const saveSubjectDate = async (
+    subjectName: string,
+    tableTitle: "Teoría" | "Práctica",
+    isoDate: string,
+  ) => {
+    try {
+      await fetch("/api/subjects", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: subjectName,
+          ...(tableTitle === "Teoría"
+            ? { theory_date: isoDate }
+            : { practice_date: isoDate }),
+        }),
+      })
+    } catch (error) {
+      console.error("Error saving subject date:", error)
+    }
+  }
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() === "c" && !editingId && !editingDaysId) {
+      if (event.key.toLowerCase() === "c" && !editingId) {
         event.preventDefault()
         setCalendarSelection(null)
         setIsCalendarMode((prev) => !prev)
@@ -399,24 +520,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         }
         return
       }
-      if (event.key.toLowerCase() === "i" && !editingId && !editingDaysId) {
+      if (event.key.toLowerCase() === "i" && !editingId) {
         event.preventDefault()
         if (isEventMode) {
           setIsEventMode(false)
         } else {
-          const tasks = tables
-            .flatMap((table) =>
-              table.tasks.map((task) => ({
-                task,
-                tableTitle: table.title,
-                daysRemaining:
-                  table.title === "Importantes"
-                    ? task.days || 0
-                    : task.denominator - task.numerator,
-              })),
-            )
-            .sort((a, b) => a.daysRemaining - b.daysRemaining)
-          setEventTasks(tasks)
+          setEventTasks(buildEventTasks())
           setEventIndex(0)
           setIsEventMode(true)
         }
@@ -459,7 +568,21 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isEventMode, editingId, editingDaysId, tables, eventTasks, isCalendarMode])
+  }, [
+    isEventMode,
+    editingId,
+    eventTasks,
+    isCalendarMode,
+    buildEventTasks,
+    goToPreviousTable,
+    goToNextTable,
+  ])
+
+  useEffect(() => {
+    if (isEventMode) {
+      setEventTasks(buildEventTasks())
+    }
+  }, [isEventMode, buildEventTasks])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -605,6 +728,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const handleCalendarDateSelection = async (selectedDate: Date) => {
     if (!calendarSelection) return
 
+    const targetTable = tables[calendarSelection.tableIndex]
+    if (!targetTable) return
+    const targetTask = targetTable.tasks.find(
+      (task) => task.id === calendarSelection.taskId,
+    )
+    if (!targetTask) return
+
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     const normalizedSelected = new Date(
@@ -615,11 +745,28 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const diffMs = normalizedSelected.getTime() - today.getTime()
     const diffDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
 
-    await updateDays(
-      calendarSelection.taskId,
-      diffDays,
-      calendarSelection.tableIndex,
-    )
+    if (targetTable.title === "Importantes") {
+      await updateDays(
+        calendarSelection.taskId,
+        diffDays,
+        calendarSelection.tableIndex,
+      )
+    } else if (
+      targetTable.title === "Teoría" ||
+      targetTable.title === "Práctica"
+    ) {
+      const isoDate = formatDateToISO(normalizedSelected)
+      setSubjectDeadlines((prev) => ({
+        ...prev,
+        [makeSubjectKey(targetTable.title, targetTask.text)]: isoDate,
+      }))
+      await saveSubjectDate(
+        targetTask.text,
+        targetTable.title as "Teoría" | "Práctica",
+        isoDate,
+      )
+    }
+
     setCalendarSelection(null)
     setIsCalendarMode(false)
   }
@@ -968,10 +1115,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           className={`space-y-3 transition-all duration-300 ${isTransitioning ? "opacity-0 transform translate-x-4" : "opacity-100 transform translate-x-0"}`}
         >
           {currentTable.tasks.map((task) => {
-            const daysRemaining =
-              currentTable.title === "Importantes"
-                ? task.days || 0
-                : task.denominator - task.numerator
+            const daysRemaining = getTaskDaysRemaining(currentTable.title, task)
             const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
             const currentPercentage = getProgressPercentage(task.numerator, task.denominator)
             const averagePercentage = calculateAveragePercentage()
@@ -989,59 +1133,50 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 <div
                   className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg cursor-pointer`}
                   onClick={() => {
-                    if (currentTable.title === "Importantes") {
-                      setEditingDaysId(null)
-                      setEditDaysValue("")
-                      const today = new Date()
-                      today.setHours(0, 0, 0, 0)
-                      let initialDate = new Date(
-                        today.getFullYear(),
-                        today.getMonth(),
+                    const today = new Date()
+                    today.setHours(0, 0, 0, 0)
+                    let initialDate = new Date(
+                      today.getFullYear(),
+                      today.getMonth(),
+                      1,
+                    )
+
+                    if (currentTable.title === "Importantes" && typeof task.days === "number") {
+                      const dueDate = new Date(today)
+                      dueDate.setDate(dueDate.getDate() + task.days)
+                      initialDate = new Date(
+                        dueDate.getFullYear(),
+                        dueDate.getMonth(),
                         1,
                       )
-                      if (typeof task.days === "number") {
-                        const dueDate = new Date(today)
-                        dueDate.setDate(dueDate.getDate() + task.days)
+                    } else if (
+                      currentTable.title === "Teoría" ||
+                      currentTable.title === "Práctica"
+                    ) {
+                      const rawDeadline = getSubjectDeadline(
+                        currentTable.title,
+                        task.text,
+                      )
+                      const parsed = parseDateInput(rawDeadline)
+                      if (parsed) {
                         initialDate = new Date(
-                          dueDate.getFullYear(),
-                          dueDate.getMonth(),
+                          parsed.getFullYear(),
+                          parsed.getMonth(),
                           1,
                         )
                       }
-                      setCalendarDate(initialDate)
-                      setCalendarSelection({
-                        taskId: task.id,
-                        tableIndex: currentTableIndex,
-                      })
-                      setIsCalendarMode(true)
-                    } else {
-                      setCalendarSelection(null)
-                      setEditingDaysId(task.id)
-                      const current = task.denominator - task.numerator
-                      setEditDaysValue(String(current))
                     }
+
+                    setCalendarDate(initialDate)
+                    setCalendarSelection({
+                      taskId: task.id,
+                      tableIndex: currentTableIndex,
+                    })
+                    setIsCalendarMode(true)
                   }}
                 >
                   <IconComponent className={`h-3 w-3 ${iconColor}`} />
-                  {editingDaysId === task.id ? (
-                    <Input
-                      value={editDaysValue}
-                      onChange={(e) => setEditDaysValue(e.target.value)}
-                      onBlur={() => {
-                        updateDays(task.id, Number.parseInt(editDaysValue) || 0)
-                        setEditingDaysId(null)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          updateDays(task.id, Number.parseInt(editDaysValue) || 0)
-                          setEditingDaysId(null)
-                        }
-                      }}
-                      className="w-10 h-4 text-black text-center bg-white rounded"
-                    />
-                  ) : (
-                    <span>{daysRemaining}d</span>
-                  )}
+                  <span>{daysRemaining}d</span>
                 </div>
 
                 <div
