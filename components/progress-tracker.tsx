@@ -46,7 +46,19 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   >([])
   const [eventIndex, setEventIndex] = useState(0)
   const [eventZoom, setEventZoom] = useState(2)
-  const [isCalendarMode, setIsCalendarMode] = useState(false)
+  const [calendarMode, setCalendarMode] = useState<"view" | "select" | null>(
+    null,
+  )
+  const [calendarSelection, setCalendarSelection] = useState<
+    | null
+    | {
+        tableIndex: number
+        taskId: string
+        taskName: string
+        tableTitle: string
+        highlightDate?: string
+      }
+  >(null)
   const [calendarDate, setCalendarDate] = useState(new Date())
 
   useEffect(() => {
@@ -346,27 +358,52 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
+  const closeCalendar = () => {
+    setCalendarSelection(null)
+    setCalendarMode(null)
+  }
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const isCalendarActive = calendarMode !== null
+
       if (event.key.toLowerCase() === "c" && !editingId && !editingDaysId) {
         event.preventDefault()
-        setIsCalendarMode((prev) => !prev)
+        if (calendarMode === "view") {
+          closeCalendar()
+        } else if (calendarMode === "select") {
+          closeCalendar()
+        } else {
+          setCalendarDate(new Date())
+          setCalendarSelection(null)
+          setCalendarMode("view")
+        }
         return
       }
-      if (isCalendarMode) {
+
+      if (isCalendarActive) {
+        if (event.key === "Escape") {
+          event.preventDefault()
+          closeCalendar()
+          return
+        }
         if (event.key === "ArrowRight") {
           event.preventDefault()
           setCalendarDate(
             (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
           )
-        } else if (event.key === "ArrowLeft") {
+          return
+        }
+        if (event.key === "ArrowLeft") {
           event.preventDefault()
           setCalendarDate(
             (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
           )
+          return
         }
         return
       }
+
       if (event.key.toLowerCase() === "i" && !editingId && !editingDaysId) {
         event.preventDefault()
         if (isEventMode) {
@@ -390,28 +427,38 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         }
         return
       }
+
       if (isEventMode) {
         if (event.ctrlKey && (event.key === "+" || event.key === "=")) {
           event.preventDefault()
           setEventZoom((prev) => Math.min(prev + 0.1, 3))
-        } else if (event.ctrlKey && (event.key === "-" || event.key === "_")) {
+          return
+        }
+        if (event.ctrlKey && (event.key === "-" || event.key === "_")) {
           event.preventDefault()
           setEventZoom((prev) => Math.max(prev - 0.1, 0.5))
-        } else if (event.ctrlKey && event.key === "0") {
+          return
+        }
+        if (event.ctrlKey && event.key === "0") {
           event.preventDefault()
           setEventZoom(2)
-        } else if (event.key === "ArrowRight") {
+          return
+        }
+        if (event.key === "ArrowRight") {
           event.preventDefault()
           setEventIndex((prev) =>
             eventTasks.length ? (prev + 1) % eventTasks.length : 0,
           )
-        } else if (event.key === "ArrowLeft") {
+          return
+        }
+        if (event.key === "ArrowLeft") {
           event.preventDefault()
           setEventIndex((prev) =>
             eventTasks.length
               ? (prev - 1 + eventTasks.length) % eventTasks.length
               : 0,
           )
+          return
         }
         return
       }
@@ -427,7 +474,14 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isEventMode, editingId, editingDaysId, tables, eventTasks, isCalendarMode])
+  }, [
+    calendarMode,
+    editingId,
+    editingDaysId,
+    isEventMode,
+    tables,
+    eventTasks,
+  ])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -518,47 +572,115 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return pdfsNeeded
   }
 
-  const updateDays = async (id: string, days: number) => {
-    const newTables = [...tables]
-    const taskIndex = newTables[currentTableIndex].tasks.findIndex((task) => task.id === id)
-    if (taskIndex !== -1) {
-      const task = newTables[currentTableIndex].tasks[taskIndex]
-      if (currentTable.title === "Importantes") {
-        const newDenominator = Math.max(task.denominator, days)
-        const newNumerator = newDenominator - days
-        newTables[currentTableIndex].tasks[taskIndex] = {
-          ...task,
-          days,
-          numerator: newNumerator,
-          denominator: newDenominator,
+  const updateDays = async (
+    id: string,
+    days: number,
+    tableIndexOverride?: number,
+  ) => {
+    const targetIndex =
+      tableIndexOverride !== undefined ? tableIndexOverride : currentTableIndex
+    const targetTable = tables[targetIndex]
+    if (!targetTable) return
+
+    const safeDays = Number.isFinite(days) ? Math.max(0, Math.round(days)) : 0
+
+    if (targetTable.title === "Importantes") {
+      const updatedTables = tables.map((table, index) => {
+        if (index !== targetIndex) return table
+        return {
+          ...table,
+          tasks: table.tasks.map((task) => {
+            if (task.id !== id) return task
+            const newDenominator = Math.max(task.denominator, safeDays, 1)
+            const newNumerator = newDenominator - safeDays
+            return {
+              ...task,
+              days: safeDays,
+              numerator: newNumerator,
+              denominator: newDenominator,
+            }
+          }),
         }
-        setTables(newTables)
+      })
+      setTables(updatedTables)
+
+      const updatedTask = updatedTables[targetIndex]?.tasks.find(
+        (task) => task.id === id,
+      )
+      if (updatedTask) {
         await fetch("/api/important", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            id: Number(task.id),
-            text: task.text,
-            numerator: newNumerator,
-            denominator: newDenominator,
-            days_remaining: days,
+            id: Number(updatedTask.id),
+            text: updatedTask.text,
+            numerator: updatedTask.numerator,
+            denominator: updatedTask.denominator,
+            days_remaining: updatedTask.days || 0,
           }),
         })
-      } else {
-        const newNumerator = 7 - days
-        newTables[currentTableIndex].tasks[taskIndex] = {
-          ...task,
-          numerator: newNumerator,
-          denominator: 7,
-        }
-        setTables(newTables)
-        await saveProgressToDatabase(
-          task.text,
-          currentTable.title as "Teoría" | "Práctica",
-          newNumerator,
-        )
       }
+      return
     }
+
+    const updatedTables = tables.map((table, index) => {
+      if (index !== targetIndex) return table
+      return {
+        ...table,
+        tasks: table.tasks.map((task) => {
+          if (task.id !== id) return task
+          const denominator = task.denominator || 7
+          const newNumerator = Math.max(
+            0,
+            Math.min(denominator, denominator - safeDays),
+          )
+          return { ...task, numerator: newNumerator, denominator }
+        }),
+      }
+    })
+    setTables(updatedTables)
+
+    const updatedTask = updatedTables[targetIndex]?.tasks.find(
+      (task) => task.id === id,
+    )
+    if (
+      updatedTask &&
+      (targetTable.title === "Teoría" || targetTable.title === "Práctica")
+    ) {
+      await saveProgressToDatabase(
+        updatedTask.text,
+        targetTable.title,
+        updatedTask.numerator,
+      )
+    }
+  }
+
+  const handleCalendarDayClick = async (day: number) => {
+    if (!calendarSelection) return
+
+    const year = calendarDate.getFullYear()
+    const month = calendarDate.getMonth()
+    const selectedDate = new Date(year, month, day)
+    const today = new Date()
+    const normalizedSelected = new Date(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      selectedDate.getDate(),
+    )
+    const normalizedToday = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+    )
+
+    const diffTime = normalizedSelected.getTime() - normalizedToday.getTime()
+    const diffDays = Math.max(
+      0,
+      Math.ceil(diffTime / (1000 * 60 * 60 * 24)),
+    )
+
+    await updateDays(calendarSelection.taskId, diffDays, calendarSelection.tableIndex)
+    closeCalendar()
   }
 
   const addImportantTask = async () => {
@@ -682,6 +804,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const startDay = new Date(year, month, 1).getDay()
     const cells = []
     const today = new Date()
+    const highlightDate = calendarSelection?.highlightDate
+      ? new Date(calendarSelection.highlightDate)
+      : null
+    if (highlightDate) {
+      highlightDate.setHours(0, 0, 0, 0)
+    }
+    const isSelectionMode = calendarMode === "select"
 
     for (let i = 0; i < startDay; i++) {
       cells.push(<div key={`empty-${i}`} />)
@@ -698,13 +827,32 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         year === today.getFullYear() &&
         month === today.getMonth() &&
         day === today.getDate()
+      const isSelected =
+        !!highlightDate &&
+        highlightDate.getFullYear() === year &&
+        highlightDate.getMonth() === month &&
+        highlightDate.getDate() === day
 
       cells.push(
-        <div
+        <button
           key={day}
-          className={`border h-24 p-1 overflow-hidden ${
-            isToday ? "bg-blue-200 dark:bg-blue-900" : ""
+          type="button"
+          onClick={
+            isSelectionMode ? () => handleCalendarDayClick(day) : undefined
+          }
+          tabIndex={isSelectionMode ? 0 : -1}
+          className={`relative h-24 w-full overflow-hidden p-1 text-left transition-colors ${
+            isSelected
+              ? "border-2 border-blue-500"
+              : "border border-border"
+          } ${
+            isToday ? "bg-blue-200 dark:bg-blue-900" : "bg-background"
+          } ${
+            isSelectionMode
+              ? "cursor-pointer hover:border-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              : "cursor-default"
           }`}
+          aria-label={`${day}/${month + 1}/${year}`}
         >
           <div className="text-[10px] font-bold">{day}</div>
           <div className="space-y-1 mt-1">
@@ -717,7 +865,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
               </div>
             ))}
           </div>
-        </div>,
+        </button>,
       )
     }
     return cells
@@ -734,38 +882,106 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     )
   }
 
-  if (isCalendarMode) {
+  if (calendarMode) {
+    const isSelectionMode = calendarMode === "select"
+    const selectionHighlight = calendarSelection?.highlightDate
+      ? new Date(calendarSelection.highlightDate)
+      : null
+    if (selectionHighlight) {
+      selectionHighlight.setHours(0, 0, 0, 0)
+    }
+    const today = new Date()
+    const normalizedToday = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+    )
+    const selectionDiffDays = selectionHighlight
+      ? Math.max(
+          0,
+          Math.ceil(
+            (selectionHighlight.getTime() - normalizedToday.getTime()) /
+              (1000 * 60 * 60 * 24),
+          ),
+        )
+      : null
+
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="bg-card p-4 rounded-lg shadow-lg w-full max-w-3xl">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-2">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() =>
+                  setCalendarDate(
+                    (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
+                  )
+                }
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="text-center">
+                <h2 className="text-xl font-bold capitalize">
+                  {calendarDate.toLocaleString("es-ES", { month: "long" })}{" "}
+                  {calendarDate.getFullYear()}
+                </h2>
+                {isSelectionMode && calendarSelection && (
+                  <p className="text-xs text-muted-foreground">
+                    {calendarSelection.tableTitle} · {calendarSelection.taskName || "Sin título"}
+                  </p>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() =>
+                  setCalendarDate(
+                    (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+                  )
+                }
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
             <Button
               variant="ghost"
               size="icon"
-              onClick={() =>
-                setCalendarDate(
-                  (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
-                )
-              }
+              onClick={closeCalendar}
+              className="bg-transparent"
             >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <h2 className="text-xl font-bold capitalize">
-              {calendarDate.toLocaleString("es-ES", { month: "long" })}{" "}
-              {calendarDate.getFullYear()}
-            </h2>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() =>
-                setCalendarDate(
-                  (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
-                )
-              }
-            >
-              <ChevronRight className="h-4 w-4" />
+              <X className="h-4 w-4" />
             </Button>
           </div>
+          {isSelectionMode && (
+            <div className="text-center text-sm text-muted-foreground mb-3 space-y-1">
+              <p>
+                Selecciona la fecha del evento para
+                {" "}
+                <span className="font-medium text-foreground">
+                  {calendarSelection?.taskName || "esta tarea"}
+                </span>
+                .
+              </p>
+              {selectionHighlight && (
+                <p className="text-xs">
+                  Actual:{" "}
+                  {selectionHighlight.toLocaleDateString("es-ES", {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                  })}
+                  {selectionDiffDays !== null && (
+                    <span>{` · ${selectionDiffDays} día${selectionDiffDays === 1 ? "" : "s"} restantes`}</span>
+                  )}
+                </p>
+              )}
+              {!selectionHighlight && (
+                <p className="text-xs">No hay fecha asignada todavía.</p>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-7 gap-2 text-xs text-center mb-2">
             {["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"].map((d) => (
               <div key={d} className="font-semibold">
@@ -877,12 +1093,37 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 <div
                   className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
                   onClick={() => {
-                    setEditingDaysId(task.id)
                     const current =
                       currentTable.title === "Importantes"
-                        ? task.days || 0
+                        ? task.days ?? 0
                         : task.denominator - task.numerator
-                    setEditDaysValue(String(current))
+
+                    if (currentTable.title === "Importantes") {
+                      const today = new Date()
+                      today.setHours(0, 0, 0, 0)
+                      let highlight: string | undefined
+                      if (task.days !== undefined) {
+                        const dueDate = new Date(today)
+                        dueDate.setDate(dueDate.getDate() + task.days)
+                        highlight = dueDate.toISOString()
+                        setCalendarDate(new Date(dueDate))
+                      } else {
+                        setCalendarDate(new Date(today))
+                      }
+
+                      setCalendarSelection({
+                        tableIndex: currentTableIndex,
+                        taskId: task.id,
+                        taskName: task.text,
+                        tableTitle: currentTable.title,
+                        highlightDate: highlight,
+                      })
+                      setCalendarMode("select")
+                      setEditingDaysId(null)
+                    } else {
+                      setEditingDaysId(task.id)
+                      setEditDaysValue(String(current))
+                    }
                   }}
                 >
                   <IconComponent className={`h-3 w-3 ${iconColor}`} />
