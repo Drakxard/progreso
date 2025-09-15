@@ -1,9 +1,32 @@
 "use client"
 
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, X } from "lucide-react"
+
+const parseDateInput = (input?: string): Date | null => {
+  if (!input) return null
+  if (/^\d+d$/.test(input)) {
+    const days = parseInt(input.slice(0, -1), 10)
+    const date = new Date()
+    date.setDate(date.getDate() + days)
+    return date
+  }
+  const date = new Date(input)
+  return isNaN(date.getTime()) ? null : date
+}
+
+const normalizeDate = (date: Date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate())
+
+const computeDaysUntil = (targetDate: Date) => {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const normalizedSelected = normalizeDate(targetDate)
+  const diffMs = normalizedSelected.getTime() - today.getTime()
+  return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
+}
 
 interface TaskItem {
   id: string
@@ -28,12 +51,19 @@ interface ProgressTrackerProps {
   }[]
 }
 
+interface SubjectSchedule {
+  name: string
+  count: number
+  theoryDate?: string
+  practiceDate?: string
+  theoryTotal?: number
+  practiceTotal?: number
+}
+
 export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [currentTableIndex, setCurrentTableIndex] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
-  const [editingDaysId, setEditingDaysId] = useState<string | null>(null)
-  const [editDaysValue, setEditDaysValue] = useState("")
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [showAverageLine, setShowAverageLine] = useState(false)
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
@@ -48,6 +78,136 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [eventZoom, setEventZoom] = useState(2)
   const [isCalendarMode, setIsCalendarMode] = useState(false)
   const [calendarDate, setCalendarDate] = useState(new Date())
+  const [calendarSelection, setCalendarSelection] = useState<
+    { taskId: string; tableIndex: number } | null
+  >(null)
+  const [subjectSchedules, setSubjectSchedules] = useState<SubjectSchedule[]>(
+    () =>
+      initialData.map((subject) => ({
+        name: subject.name,
+        count: subject.count,
+        theoryDate: subject.theoryDate,
+        practiceDate: subject.practiceDate,
+        theoryTotal: 7,
+        practiceTotal: 7,
+      })),
+  )
+  const subjectSchedulesRef = useRef(subjectSchedules)
+
+  useEffect(() => {
+    setSubjectSchedules((prev) =>
+      initialData.map((subject) => {
+        const existing = prev.find((item) => item.name === subject.name)
+        return {
+          name: subject.name,
+          count: subject.count,
+          theoryDate: subject.theoryDate ?? existing?.theoryDate,
+          practiceDate: subject.practiceDate ?? existing?.practiceDate,
+          theoryTotal: existing?.theoryTotal ?? 7,
+          practiceTotal: existing?.practiceTotal ?? 7,
+        }
+      }),
+    )
+  }, [initialData])
+
+  const syncCountdowns = useCallback((schedules: SubjectSchedule[]) => {
+    setTables((prevTables) => {
+      let tablesChanged = false
+
+      const updatedTables = prevTables.map((table) => {
+        if (table.title !== "Teoría" && table.title !== "Práctica") {
+          return table
+        }
+
+        const tableType = table.title === "Teoría" ? "theory" : "practice"
+        let tasksChanged = false
+
+        const updatedTasks = table.tasks.map((task) => {
+          const schedule = schedules.find((item) => item.name === task.text)
+          if (!schedule) {
+            if (task.days !== undefined) {
+              tasksChanged = true
+              const updatedTask = { ...task, days: undefined }
+              return updatedTask
+            }
+            return task
+          }
+
+          const rawDate =
+            tableType === "theory" ? schedule.theoryDate : schedule.practiceDate
+          const total =
+            tableType === "theory"
+              ? schedule.theoryTotal ?? task.denominator
+              : schedule.practiceTotal ?? task.denominator
+          const eventDate = parseDateInput(rawDate)
+
+          if (!eventDate) {
+            if (task.days !== undefined || (total && total !== task.denominator)) {
+              tasksChanged = true
+              const updatedTask: TaskItem = { ...task, days: undefined }
+              if (total && total > 0) {
+                updatedTask.denominator = total
+                if (updatedTask.numerator > total) {
+                  updatedTask.numerator = total
+                }
+              }
+              return updatedTask
+            }
+            return task
+          }
+
+          const diffDays = computeDaysUntil(eventDate)
+          const baselineTotal =
+            total && total > 0
+              ? Math.max(total, diffDays)
+              : Math.max(diffDays, task.denominator)
+          const newDenominator = Math.max(baselineTotal, 1)
+          const newNumerator = Math.min(
+            newDenominator,
+            Math.max(newDenominator - diffDays, 0),
+          )
+
+          if (
+            task.days === diffDays &&
+            task.denominator === newDenominator &&
+            task.numerator === newNumerator
+          ) {
+            return task
+          }
+
+          tasksChanged = true
+          return {
+            ...task,
+            days: diffDays,
+            denominator: newDenominator,
+            numerator: newNumerator,
+          }
+        })
+
+        if (tasksChanged) {
+          tablesChanged = true
+          return { ...table, tasks: updatedTasks }
+        }
+
+        return table
+      })
+
+      return tablesChanged ? updatedTables : prevTables
+    })
+  }, [])
+
+  useEffect(() => {
+    subjectSchedulesRef.current = subjectSchedules
+    syncCountdowns(subjectSchedules)
+  }, [subjectSchedules, syncCountdowns])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      syncCountdowns(subjectSchedulesRef.current)
+    }, 60000)
+
+    return () => clearInterval(interval)
+  }, [syncCountdowns])
 
   useEffect(() => {
     const stored = localStorage.getItem("eventZoom")
@@ -124,29 +284,22 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   const hasLoadedImportant = useRef(false)
 
-  const parseDateInput = (input?: string): Date | null => {
-    if (!input) return null
-    if (/^\d+d$/.test(input)) {
-      const days = parseInt(input.slice(0, -1), 10)
-      const date = new Date()
-      date.setDate(date.getDate() + days)
-      return date
-    }
-    const date = new Date(input)
-    return isNaN(date.getTime()) ? null : date
-  }
-
   const calendarEvents = useMemo(() => {
     const events: { date: Date; label: string; color: string }[] = []
 
     const teoriaTasks = tables.find((t) => t.title === "Teoría")?.tasks || []
     const practicaTasks = tables.find((t) => t.title === "Práctica")?.tasks || []
 
-    initialData.forEach((subject) => {
+    subjectSchedules.forEach((subject) => {
       const theoryDate = parseDateInput(subject.theoryDate)
       if (theoryDate) {
         const tTask = teoriaTasks.find((t) => t.text === subject.name)
-        const remaining = tTask ? tTask.denominator - tTask.numerator : undefined
+        const remaining =
+          tTask && typeof tTask.days === "number"
+            ? tTask.days
+            : tTask
+              ? Math.max(tTask.denominator - tTask.numerator, 0)
+              : undefined
         events.push({
           date: theoryDate,
           label: `${subject.name} teoría${
@@ -158,7 +311,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       const practiceDate = parseDateInput(subject.practiceDate)
       if (practiceDate) {
         const pTask = practicaTasks.find((t) => t.text === subject.name)
-        const remaining = pTask ? pTask.denominator - pTask.numerator : undefined
+        const remaining =
+          pTask && typeof pTask.days === "number"
+            ? pTask.days
+            : pTask
+              ? Math.max(pTask.denominator - pTask.numerator, 0)
+              : undefined
         events.push({
           date: practiceDate,
           label: `${subject.name} práctica${
@@ -185,7 +343,39 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       })
 
     return events
-  }, [tables, initialData])
+  }, [tables, subjectSchedules])
+
+  const selectedCalendarTask = useMemo(() => {
+    if (!calendarSelection) return null
+    const table = tables[calendarSelection.tableIndex]
+    if (!table) return null
+    const task = table.tasks.find((t) => t.id === calendarSelection.taskId)
+    if (!task) return null
+
+    let dueDate: Date | null = null
+    if (table.title === "Importantes" && typeof task.days === "number") {
+      const base = new Date()
+      base.setHours(0, 0, 0, 0)
+      base.setDate(base.getDate() + task.days)
+      dueDate = base
+    } else if (table.title === "Teoría" || table.title === "Práctica") {
+      const subject = subjectSchedules.find((item) => item.name === task.text)
+      if (subject) {
+        const rawDate =
+          table.title === "Teoría" ? subject.theoryDate : subject.practiceDate
+        const parsedDate = parseDateInput(rawDate)
+        if (parsedDate) {
+          dueDate = parsedDate
+        }
+      }
+    }
+
+    return {
+      task,
+      tableTitle: table.title,
+      dueDate,
+    }
+  }, [calendarSelection, tables, subjectSchedules])
 
   const saveTopicsToLocalStorage = (tables: Table[]) => {
     const topicsData: Record<string, string[]> = {}
@@ -215,6 +405,41 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         return updatedTables
       })
     }
+  }
+
+  const loadSubjectsFromDatabase = async () => {
+    try {
+      const response = await fetch("/api/subjects", { cache: "no-store" })
+      if (response.ok) {
+        const subjects = await response.json()
+        setSubjectSchedules((prev) => {
+          const mapped: SubjectSchedule[] = subjects.map((subject: any) => {
+            const existing = prev.find((item) => item.name === subject.name)
+            return {
+              name: subject.name,
+              count: subject.pdf_count ?? existing?.count ?? 0,
+              theoryDate: subject.theory_date ?? existing?.theoryDate,
+              practiceDate: subject.practice_date ?? existing?.practiceDate,
+              theoryTotal: existing?.theoryTotal ?? 7,
+              practiceTotal: existing?.practiceTotal ?? 7,
+            }
+          })
+
+          const names = new Set(mapped.map((item) => item.name))
+          prev.forEach((item) => {
+            if (!names.has(item.name)) {
+              mapped.push(item)
+            }
+          })
+
+          return mapped
+        })
+        return true
+      }
+    } catch (error) {
+      console.error("Error loading subjects:", error)
+    }
+    return false
   }
 
   const saveImportantToLocalStorage = (tasks: TaskItem[]) => {
@@ -252,26 +477,62 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       if (response.ok) {
         const progressData = await response.json()
 
-        // Actualizar las tablas con el progreso guardado
-        setTables((prevTables) =>
-          prevTables.map((table) => ({
-            ...table,
-            tasks: table.tasks.map((task) => {
-              const tableType = table.title === "Teoría" ? "theory" : "practice"
-              const savedProgress = progressData.find(
-                (p: any) => p.subject_name === task.text && p.table_type === tableType,
-              )
+        const progressMap = new Map<string, any>()
+        progressData.forEach((record: any) => {
+          progressMap.set(`${record.subject_name}-${record.table_type}`, record)
+        })
 
-              if (savedProgress) {
-                return {
-                  ...task,
-                  numerator: savedProgress.current_progress % 7,
-                  denominator: 7,
+        setTables((prevTables) =>
+          prevTables.map((table) => {
+            if (table.title !== "Teoría" && table.title !== "Práctica") {
+              return table
+            }
+
+            const tableType = table.title === "Teoría" ? "theory" : "practice"
+
+            return {
+              ...table,
+              tasks: table.tasks.map((task) => {
+                const savedProgress = progressMap.get(`${task.text}-${tableType}`)
+
+                if (savedProgress) {
+                  const denominator = Math.max(
+                    savedProgress.total_pdfs ?? task.denominator ?? 0,
+                    1,
+                  )
+                  const numerator = Math.min(
+                    denominator,
+                    Math.max(savedProgress.current_progress ?? 0, 0),
+                  )
+                  return {
+                    ...task,
+                    numerator,
+                    denominator,
+                  }
                 }
-              }
-              return task
-            }),
-          }))
+                return task
+              }),
+            }
+          }),
+        )
+
+        setSubjectSchedules((prev) =>
+          prev.map((subject) => {
+            const theoryRecord = progressMap.get(`${subject.name}-theory`)
+            const practiceRecord = progressMap.get(`${subject.name}-practice`)
+
+            return {
+              ...subject,
+              theoryTotal:
+                theoryRecord && theoryRecord.total_pdfs
+                  ? Math.max(theoryRecord.total_pdfs, 1)
+                  : subject.theoryTotal ?? 7,
+              practiceTotal:
+                practiceRecord && practiceRecord.total_pdfs
+                  ? Math.max(practiceRecord.total_pdfs, 1)
+                  : subject.practiceTotal ?? 7,
+            }
+          }),
         )
       }
     } catch (error) {
@@ -313,6 +574,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           }
           return newTables
         })
+        hasLoadedImportant.current = true
         return Array.isArray(tasks) && tasks.length > 0
       }
     } catch (error) {
@@ -320,6 +582,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     } finally {
       setIsLoading(false)
     }
+    hasLoadedImportant.current = true
     return false
   }
 
@@ -327,6 +590,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     subjectName: string,
     tableType: "Teoría" | "Práctica",
     numerator: number,
+    denominator: number,
   ) => {
     try {
       await fetch("/api/progress", {
@@ -338,7 +602,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           subjectName,
           tableType: tableType === "Teoría" ? "theory" : "practice",
           currentProgress: numerator,
-          totalPdfs: 7,
+          totalPdfs: denominator,
         }),
       })
     } catch (error) {
@@ -348,12 +612,19 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() === "c" && !editingId && !editingDaysId) {
+      if (event.key.toLowerCase() === "c" && !editingId) {
         event.preventDefault()
+        setCalendarSelection(null)
         setIsCalendarMode((prev) => !prev)
         return
       }
       if (isCalendarMode) {
+        if (event.key === "Escape") {
+          event.preventDefault()
+          setCalendarSelection(null)
+          setIsCalendarMode(false)
+          return
+        }
         if (event.key === "ArrowRight") {
           event.preventDefault()
           setCalendarDate(
@@ -367,7 +638,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         }
         return
       }
-      if (event.key.toLowerCase() === "i" && !editingId && !editingDaysId) {
+      if (event.key.toLowerCase() === "i" && !editingId) {
         event.preventDefault()
         if (isEventMode) {
           setIsEventMode(false)
@@ -378,9 +649,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 task,
                 tableTitle: table.title,
                 daysRemaining:
-                  table.title === "Importantes"
-                    ? task.days || 0
-                    : task.denominator - task.numerator,
+                  typeof task.days === "number"
+                    ? task.days
+                    : Math.max(task.denominator - task.numerator, 0),
               })),
             )
             .sort((a, b) => a.daysRemaining - b.daysRemaining)
@@ -427,20 +698,19 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isEventMode, editingId, editingDaysId, tables, eventTasks, isCalendarMode])
+  }, [isEventMode, editingId, tables, eventTasks, isCalendarMode])
 
   useEffect(() => {
     const fetchData = async () => {
+      await loadSubjectsFromDatabase()
       await loadProgressFromDatabase()
       const hasDbImportant = await loadImportantFromDatabase()
       loadTopicsFromLocalStorage()
       if (!hasDbImportant) {
         loadImportantFromLocalStorage()
-      } else {
-        hasLoadedImportant.current = true
       }
     }
-    fetchData()
+    void fetchData()
   }, [])
 
   const currentTable = tables[currentTableIndex]
@@ -518,47 +788,153 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return pdfsNeeded
   }
 
-  const updateDays = async (id: string, days: number) => {
+  const updateDays = async (
+    id: string,
+    days: number,
+    tableIndexOverride?: number,
+    options?: { eventDate?: Date },
+  ) => {
+    const targetTableIndex =
+      tableIndexOverride !== undefined ? tableIndexOverride : currentTableIndex
     const newTables = [...tables]
-    const taskIndex = newTables[currentTableIndex].tasks.findIndex((task) => task.id === id)
-    if (taskIndex !== -1) {
-      const task = newTables[currentTableIndex].tasks[taskIndex]
-      if (currentTable.title === "Importantes") {
-        const newDenominator = Math.max(task.denominator, days)
-        const newNumerator = newDenominator - days
-        newTables[currentTableIndex].tasks[taskIndex] = {
-          ...task,
-          days,
+    const targetTable = newTables[targetTableIndex]
+    if (!targetTable) return
+
+    const taskIndex = targetTable.tasks.findIndex((task) => task.id === id)
+    if (taskIndex === -1) return
+
+    const task = targetTable.tasks[taskIndex]
+    const normalizedDays = Math.max(0, days)
+    const isCalendarUpdate = Boolean(options?.eventDate)
+
+    if (targetTable.title === "Importantes") {
+      const newDenominator = Math.max(task.denominator, normalizedDays, 1)
+      const newNumerator = Math.min(
+        newDenominator,
+        Math.max(newDenominator - normalizedDays, 0),
+      )
+      targetTable.tasks[taskIndex] = {
+        ...task,
+        days: normalizedDays,
+        numerator: newNumerator,
+        denominator: newDenominator,
+      }
+      setTables(newTables)
+      await fetch("/api/important", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: Number(task.id),
+          text: task.text,
           numerator: newNumerator,
           denominator: newDenominator,
-        }
-        setTables(newTables)
-        await fetch("/api/important", {
+          days_remaining: normalizedDays,
+        }),
+      })
+      return
+    }
+
+    const newDenominator = isCalendarUpdate
+      ? Math.max(normalizedDays, 1)
+      : Math.max(task.denominator, normalizedDays, 1)
+    const newNumerator = Math.min(
+      newDenominator,
+      Math.max(newDenominator - normalizedDays, 0),
+    )
+    targetTable.tasks[taskIndex] = {
+      ...task,
+      numerator: newNumerator,
+      denominator: newDenominator,
+      days: normalizedDays,
+    }
+    setTables(newTables)
+    await saveProgressToDatabase(
+      task.text,
+      targetTable.title as "Teoría" | "Práctica",
+      newNumerator,
+      newDenominator,
+    )
+  }
+
+  const handleCalendarDateSelection = async (selectedDate: Date) => {
+    if (!calendarSelection) return
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const normalizedSelected = new Date(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      selectedDate.getDate(),
+    )
+    const diffMs = normalizedSelected.getTime() - today.getTime()
+    const diffDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
+
+    const targetTable = tables[calendarSelection.tableIndex]
+    if (!targetTable) {
+      setCalendarSelection(null)
+      setIsCalendarMode(false)
+      return
+    }
+
+    const task = targetTable.tasks.find((item) => item.id === calendarSelection.taskId)
+    if (!task) {
+      setCalendarSelection(null)
+      setIsCalendarMode(false)
+      return
+    }
+
+    if (targetTable.title === "Teoría" || targetTable.title === "Práctica") {
+      const isoDate = normalizedSelected.toISOString()
+      const tableTitle = targetTable.title
+
+      setSubjectSchedules((prev) =>
+        prev.map((subject) => {
+          if (subject.name !== task.text) {
+            return subject
+          }
+          return {
+            ...subject,
+            theoryDate: tableTitle === "Teoría" ? isoDate : subject.theoryDate,
+            practiceDate:
+              tableTitle === "Práctica" ? isoDate : subject.practiceDate,
+            theoryTotal:
+              tableTitle === "Teoría"
+                ? Math.max(diffDays, 1)
+                : subject.theoryTotal ?? 7,
+            practiceTotal:
+              tableTitle === "Práctica"
+                ? Math.max(diffDays, 1)
+                : subject.practiceTotal ?? 7,
+          }
+        }),
+      )
+
+      const payload: Record<string, unknown> = { name: task.text }
+      if (tableTitle === "Teoría") {
+        payload.theory_date = isoDate
+      } else {
+        payload.practice_date = isoDate
+      }
+
+      try {
+        await fetch("/api/subjects", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: Number(task.id),
-            text: task.text,
-            numerator: newNumerator,
-            denominator: newDenominator,
-            days_remaining: days,
-          }),
+          body: JSON.stringify(payload),
         })
-      } else {
-        const newNumerator = 7 - days
-        newTables[currentTableIndex].tasks[taskIndex] = {
-          ...task,
-          numerator: newNumerator,
-          denominator: 7,
-        }
-        setTables(newTables)
-        await saveProgressToDatabase(
-          task.text,
-          currentTable.title as "Teoría" | "Práctica",
-          newNumerator,
-        )
+      } catch (error) {
+        console.error("Error saving subject date:", error)
       }
     }
+
+    await updateDays(
+      calendarSelection.taskId,
+      diffDays,
+      calendarSelection.tableIndex,
+      { eventDate: normalizedSelected },
+    )
+    setCalendarSelection(null)
+    setIsCalendarMode(false)
   }
 
   const addImportantTask = async () => {
@@ -682,6 +1058,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const startDay = new Date(year, month, 1).getDay()
     const cells = []
     const today = new Date()
+    const selectedDate = selectedCalendarTask?.dueDate || null
+    const isSelectingDate = Boolean(calendarSelection)
 
     for (let i = 0; i < startDay; i++) {
       cells.push(<div key={`empty-${i}`} />)
@@ -698,12 +1076,25 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         year === today.getFullYear() &&
         month === today.getMonth() &&
         day === today.getDate()
+      const isSelected =
+        selectedDate !== null &&
+        selectedDate.getFullYear() === year &&
+        selectedDate.getMonth() === month &&
+        selectedDate.getDate() === day
 
       cells.push(
-        <div
+        <button
+          type="button"
           key={day}
-          className={`border h-24 p-1 overflow-hidden ${
+          onClick={() => {
+            if (isSelectingDate) {
+              void handleCalendarDateSelection(new Date(year, month, day))
+            }
+          }}
+          className={`border h-24 p-1 overflow-hidden text-left transition-colors ${
             isToday ? "bg-blue-200 dark:bg-blue-900" : ""
+          } ${isSelected ? "ring-2 ring-blue-500" : ""} ${
+            isSelectingDate ? "cursor-pointer hover:border-blue-500" : "cursor-default"
           }`}
         >
           <div className="text-[10px] font-bold">{day}</div>
@@ -717,7 +1108,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
               </div>
             ))}
           </div>
-        </div>,
+        </button>,
       )
     }
     return cells
@@ -738,7 +1129,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="bg-card p-4 rounded-lg shadow-lg w-full max-w-3xl">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-2">
             <Button
               variant="ghost"
               size="icon"
@@ -747,24 +1138,53 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                   (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
                 )
               }
+              aria-label="Mes anterior"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <h2 className="text-xl font-bold capitalize">
-              {calendarDate.toLocaleString("es-ES", { month: "long" })}{" "}
-              {calendarDate.getFullYear()}
-            </h2>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() =>
-                setCalendarDate(
-                  (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
-                )
-              }
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+            <div className="flex-1 text-center">
+              <h2 className="text-xl font-bold capitalize">
+                {calendarDate.toLocaleString("es-ES", { month: "long" })}{" "}
+                {calendarDate.getFullYear()}
+              </h2>
+              {calendarSelection && selectedCalendarTask && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Selecciona la fecha del evento para {" "}
+                  <span className="font-semibold">
+                    {selectedCalendarTask.task.text}
+                  </span>
+                  {selectedCalendarTask.tableTitle
+                    ? ` (${selectedCalendarTask.tableTitle})`
+                    : ""}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() =>
+                  setCalendarDate(
+                    (prev) =>
+                      new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+                  )
+                }
+                aria-label="Mes siguiente"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  setCalendarSelection(null)
+                  setIsCalendarMode(false)
+                }}
+                aria-label="Cerrar calendario"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
           <div className="grid grid-cols-7 gap-2 text-xs text-center mb-2">
             {["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"].map((d) => (
@@ -774,6 +1194,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             ))}
             {renderCalendarCells()}
           </div>
+          {calendarSelection && (
+            <p className="text-xs text-muted-foreground text-center">
+              Haz clic en una fecha para asignar los días restantes de este evento.
+            </p>
+          )}
         </div>
       </div>
     )
@@ -805,7 +1230,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           <div className="relative z-10 flex items-center gap-4 p-6">
             <div className="flex-1 p-3 text-foreground">{task.text}</div>
             <div className="text-sm text-muted-foreground font-medium shrink-0">
-              {task.denominator - daysRemaining}/{task.denominator}
+              {Math.max(task.denominator - daysRemaining, 0)}/{task.denominator}
             </div>
             <div className="text-sm text-muted-foreground font-medium shrink-0 w-12 text-right">
               {Math.round(getProgressPercentage(task.numerator, task.denominator))}%
@@ -857,9 +1282,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         >
           {currentTable.tasks.map((task) => {
             const daysRemaining =
-              currentTable.title === "Importantes"
-                ? task.days || 0
-                : task.denominator - task.numerator
+              typeof task.days === "number"
+                ? task.days
+                : Math.max(task.denominator - task.numerator, 0)
             const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
             const currentPercentage = getProgressPercentage(task.numerator, task.denominator)
             const averagePercentage = calculateAveragePercentage()
@@ -875,36 +1300,54 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 onMouseLeave={() => setHoveredTaskId(null)}
               >
                 <div
-                  className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
+                  className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg cursor-pointer`}
                   onClick={() => {
-                    setEditingDaysId(task.id)
-                    const current =
-                      currentTable.title === "Importantes"
-                        ? task.days || 0
-                        : task.denominator - task.numerator
-                    setEditDaysValue(String(current))
+                    const today = new Date()
+                    today.setHours(0, 0, 0, 0)
+                    let initialDate = new Date(
+                      today.getFullYear(),
+                      today.getMonth(),
+                      1,
+                    )
+
+                    if (currentTable.title === "Importantes") {
+                      if (typeof task.days === "number") {
+                        const dueDate = new Date(today)
+                        dueDate.setDate(dueDate.getDate() + task.days)
+                        initialDate = new Date(
+                          dueDate.getFullYear(),
+                          dueDate.getMonth(),
+                          1,
+                        )
+                      }
+                    } else {
+                      const subject = subjectSchedules.find(
+                        (item) => item.name === task.text,
+                      )
+                      const rawDate =
+                        currentTable.title === "Teoría"
+                          ? subject?.theoryDate
+                          : subject?.practiceDate
+                      const parsedDate = parseDateInput(rawDate)
+                      if (parsedDate) {
+                        initialDate = new Date(
+                          parsedDate.getFullYear(),
+                          parsedDate.getMonth(),
+                          1,
+                        )
+                      }
+                    }
+
+                    setCalendarDate(initialDate)
+                    setCalendarSelection({
+                      taskId: task.id,
+                      tableIndex: currentTableIndex,
+                    })
+                    setIsCalendarMode(true)
                   }}
                 >
                   <IconComponent className={`h-3 w-3 ${iconColor}`} />
-                  {editingDaysId === task.id ? (
-                    <Input
-                      value={editDaysValue}
-                      onChange={(e) => setEditDaysValue(e.target.value)}
-                      onBlur={() => {
-                        updateDays(task.id, Number.parseInt(editDaysValue) || 0)
-                        setEditingDaysId(null)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          updateDays(task.id, Number.parseInt(editDaysValue) || 0)
-                          setEditingDaysId(null)
-                        }
-                      }}
-                      className="w-10 h-4 text-black text-center bg-white rounded"
-                    />
-                  ) : (
-                    <span>{daysRemaining}d</span>
-                  )}
+                  <span>{daysRemaining}d</span>
                 </div>
 
                 <div
@@ -966,7 +1409,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                   </div>
 
                   <div className="text-sm text-muted-foreground font-medium shrink-0">
-                    {task.denominator - daysRemaining}/{task.denominator}
+                    {Math.max(task.denominator - daysRemaining, 0)}/{task.denominator}
                   </div>
 
                   <div className="text-sm text-muted-foreground font-medium shrink-0 w-12 text-right">
