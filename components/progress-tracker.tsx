@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, X } from "lucide-react"
@@ -32,13 +32,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [currentTableIndex, setCurrentTableIndex] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
-  const [editingDaysId, setEditingDaysId] = useState<string | null>(null)
-  const [editDaysValue, setEditDaysValue] = useState("")
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [showAverageLine, setShowAverageLine] = useState(false)
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [topicInputs, setTopicInputs] = useState<Record<string, string>>({})
+  const [subjectDeadlines, setSubjectDeadlines] = useState<Record<string, string>>({})
  
   const [isEventMode, setIsEventMode] = useState(false)
   const [eventTasks, setEventTasks] = useState<
@@ -48,6 +47,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [eventZoom, setEventZoom] = useState(2)
   const [isCalendarMode, setIsCalendarMode] = useState(false)
   const [calendarDate, setCalendarDate] = useState(new Date())
+  const [calendarSelection, setCalendarSelection] = useState<
+    { taskId: string; tableIndex: number } | null
+  >(null)
 
   useEffect(() => {
     const stored = localStorage.getItem("eventZoom")
@@ -124,6 +126,49 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   const hasLoadedImportant = useRef(false)
 
+  const makeSubjectKey = (tableTitle: string, subjectName: string) =>
+    `${tableTitle}|${subjectName}`
+
+  const subjectDataMap = useMemo(() => {
+    const map = new Map<string, (typeof initialData)[number]>()
+    initialData.forEach((subject) => {
+      map.set(subject.name, subject)
+    })
+    return map
+  }, [initialData])
+
+  useEffect(() => {
+    const nextDeadlines: Record<string, string> = {}
+    initialData.forEach((subject) => {
+      if (subject.theoryDate) {
+        nextDeadlines[makeSubjectKey("Teoría", subject.name)] = subject.theoryDate
+      }
+      if (subject.practiceDate) {
+        nextDeadlines[makeSubjectKey("Práctica", subject.name)] = subject.practiceDate
+      }
+    })
+    setSubjectDeadlines((prev) => ({ ...prev, ...nextDeadlines }))
+  }, [initialData])
+
+  const getSubjectDeadline = useCallback(
+    (tableTitle: string, subjectName: string) => {
+      const key = makeSubjectKey(tableTitle, subjectName)
+      if (subjectDeadlines[key]) {
+        return subjectDeadlines[key]
+      }
+      const subject = subjectDataMap.get(subjectName)
+      if (!subject) return undefined
+      if (tableTitle === "Teoría") {
+        return subject.theoryDate
+      }
+      if (tableTitle === "Práctica") {
+        return subject.practiceDate
+      }
+      return undefined
+    },
+    [subjectDeadlines, subjectDataMap],
+  )
+
   const parseDateInput = (input?: string): Date | null => {
     if (!input) return null
     if (/^\d+d$/.test(input)) {
@@ -136,6 +181,45 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return isNaN(date.getTime()) ? null : date
   }
 
+  const getNormalizedDaysUntil = (date: Date | null) => {
+    if (!date) return undefined
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const dueDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+    const diffMs = dueDate.getTime() - today.getTime()
+    return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
+  }
+
+  const getTaskDaysRemaining = useCallback(
+    (tableTitle: string, task: TaskItem) => {
+      if (tableTitle === "Importantes") {
+        return Math.max(0, task.days ?? 0)
+      }
+
+      const deadlineValue = getSubjectDeadline(tableTitle, task.text)
+      const dueDate = parseDateInput(deadlineValue)
+      const diffDays = getNormalizedDaysUntil(dueDate)
+      if (typeof diffDays === "number") {
+        return diffDays
+      }
+
+      return Math.max(0, task.denominator - task.numerator)
+    },
+    [getSubjectDeadline],
+  )
+
+  const buildEventTasks = useCallback(() => {
+    return tables
+      .flatMap((table) =>
+        table.tasks.map((task) => ({
+          task,
+          tableTitle: table.title,
+          daysRemaining: getTaskDaysRemaining(table.title, task),
+        })),
+      )
+      .sort((a, b) => a.daysRemaining - b.daysRemaining)
+  }, [tables, getTaskDaysRemaining])
+
   const calendarEvents = useMemo(() => {
     const events: { date: Date; label: string; color: string }[] = []
 
@@ -143,7 +227,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const practicaTasks = tables.find((t) => t.title === "Práctica")?.tasks || []
 
     initialData.forEach((subject) => {
-      const theoryDate = parseDateInput(subject.theoryDate)
+      const theoryDate = parseDateInput(
+        getSubjectDeadline("Teoría", subject.name),
+      )
       if (theoryDate) {
         const tTask = teoriaTasks.find((t) => t.text === subject.name)
         const remaining = tTask ? tTask.denominator - tTask.numerator : undefined
@@ -155,7 +241,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           color: "bg-blue-500",
         })
       }
-      const practiceDate = parseDateInput(subject.practiceDate)
+      const practiceDate = parseDateInput(
+        getSubjectDeadline("Práctica", subject.name),
+      )
       if (practiceDate) {
         const pTask = practicaTasks.find((t) => t.text === subject.name)
         const remaining = pTask ? pTask.denominator - pTask.numerator : undefined
@@ -185,7 +273,35 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       })
 
     return events
-  }, [tables, initialData])
+  }, [tables, initialData, getSubjectDeadline])
+
+  const selectedCalendarTask = useMemo(() => {
+    if (!calendarSelection) return null
+    const table = tables[calendarSelection.tableIndex]
+    if (!table) return null
+    const task = table.tasks.find((t) => t.id === calendarSelection.taskId)
+    if (!task) return null
+
+    let dueDate: Date | null = null
+    if (table.title === "Importantes" && typeof task.days === "number") {
+      const base = new Date()
+      base.setHours(0, 0, 0, 0)
+      base.setDate(base.getDate() + task.days)
+      dueDate = base
+    } else if (table.title === "Teoría" || table.title === "Práctica") {
+      const rawDeadline = getSubjectDeadline(table.title, task.text)
+      const parsed = parseDateInput(rawDeadline)
+      if (parsed) {
+        dueDate = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate())
+      }
+    }
+
+    return {
+      task,
+      tableTitle: table.title,
+      dueDate,
+    }
+  }, [calendarSelection, tables, getSubjectDeadline])
 
   const saveTopicsToLocalStorage = (tables: Table[]) => {
     const topicsData: Record<string, string[]> = {}
@@ -346,14 +462,51 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
   }
 
+  const formatDateToISO = (date: Date) => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, "0")
+    const day = String(date.getDate()).padStart(2, "0")
+    return `${year}-${month}-${day}`
+  }
+
+  const saveSubjectDate = async (
+    subjectName: string,
+    tableTitle: "Teoría" | "Práctica",
+    isoDate: string,
+  ) => {
+    try {
+      await fetch("/api/subjects", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: subjectName,
+          ...(tableTitle === "Teoría"
+            ? { theory_date: isoDate }
+            : { practice_date: isoDate }),
+        }),
+      })
+    } catch (error) {
+      console.error("Error saving subject date:", error)
+    }
+  }
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() === "c" && !editingId && !editingDaysId) {
+      if (event.key.toLowerCase() === "c" && !editingId) {
         event.preventDefault()
+        setCalendarSelection(null)
         setIsCalendarMode((prev) => !prev)
         return
       }
       if (isCalendarMode) {
+        if (event.key === "Escape") {
+          event.preventDefault()
+          setCalendarSelection(null)
+          setIsCalendarMode(false)
+          return
+        }
         if (event.key === "ArrowRight") {
           event.preventDefault()
           setCalendarDate(
@@ -367,24 +520,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         }
         return
       }
-      if (event.key.toLowerCase() === "i" && !editingId && !editingDaysId) {
+      if (event.key.toLowerCase() === "i" && !editingId) {
         event.preventDefault()
         if (isEventMode) {
           setIsEventMode(false)
         } else {
-          const tasks = tables
-            .flatMap((table) =>
-              table.tasks.map((task) => ({
-                task,
-                tableTitle: table.title,
-                daysRemaining:
-                  table.title === "Importantes"
-                    ? task.days || 0
-                    : task.denominator - task.numerator,
-              })),
-            )
-            .sort((a, b) => a.daysRemaining - b.daysRemaining)
-          setEventTasks(tasks)
+          setEventTasks(buildEventTasks())
           setEventIndex(0)
           setIsEventMode(true)
         }
@@ -427,7 +568,21 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isEventMode, editingId, editingDaysId, tables, eventTasks, isCalendarMode])
+  }, [
+    isEventMode,
+    editingId,
+    eventTasks,
+    isCalendarMode,
+    buildEventTasks,
+    goToPreviousTable,
+    goToNextTable,
+  ])
+
+  useEffect(() => {
+    if (isEventMode) {
+      setEventTasks(buildEventTasks())
+    }
+  }, [isEventMode, buildEventTasks])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -518,47 +673,102 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return pdfsNeeded
   }
 
-  const updateDays = async (id: string, days: number) => {
+  const updateDays = async (
+    id: string,
+    days: number,
+    tableIndexOverride?: number,
+  ) => {
+    const targetTableIndex =
+      tableIndexOverride !== undefined ? tableIndexOverride : currentTableIndex
     const newTables = [...tables]
-    const taskIndex = newTables[currentTableIndex].tasks.findIndex((task) => task.id === id)
-    if (taskIndex !== -1) {
-      const task = newTables[currentTableIndex].tasks[taskIndex]
-      if (currentTable.title === "Importantes") {
-        const newDenominator = Math.max(task.denominator, days)
-        const newNumerator = newDenominator - days
-        newTables[currentTableIndex].tasks[taskIndex] = {
-          ...task,
-          days,
+    const targetTable = newTables[targetTableIndex]
+    if (!targetTable) return
+
+    const taskIndex = targetTable.tasks.findIndex((task) => task.id === id)
+    if (taskIndex === -1) return
+
+    const task = targetTable.tasks[taskIndex]
+    if (targetTable.title === "Importantes") {
+      const newDenominator = Math.max(task.denominator, days)
+      const newNumerator = newDenominator - days
+      targetTable.tasks[taskIndex] = {
+        ...task,
+        days,
+        numerator: newNumerator,
+        denominator: newDenominator,
+      }
+      setTables(newTables)
+      await fetch("/api/important", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: Number(task.id),
+          text: task.text,
           numerator: newNumerator,
           denominator: newDenominator,
-        }
-        setTables(newTables)
-        await fetch("/api/important", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: Number(task.id),
-            text: task.text,
-            numerator: newNumerator,
-            denominator: newDenominator,
-            days_remaining: days,
-          }),
-        })
-      } else {
-        const newNumerator = 7 - days
-        newTables[currentTableIndex].tasks[taskIndex] = {
-          ...task,
-          numerator: newNumerator,
-          denominator: 7,
-        }
-        setTables(newTables)
-        await saveProgressToDatabase(
-          task.text,
-          currentTable.title as "Teoría" | "Práctica",
-          newNumerator,
-        )
+          days_remaining: days,
+        }),
+      })
+    } else {
+      const newNumerator = 7 - days
+      targetTable.tasks[taskIndex] = {
+        ...task,
+        numerator: newNumerator,
+        denominator: 7,
       }
+      setTables(newTables)
+      await saveProgressToDatabase(
+        task.text,
+        targetTable.title as "Teoría" | "Práctica",
+        newNumerator,
+      )
     }
+  }
+
+  const handleCalendarDateSelection = async (selectedDate: Date) => {
+    if (!calendarSelection) return
+
+    const targetTable = tables[calendarSelection.tableIndex]
+    if (!targetTable) return
+    const targetTask = targetTable.tasks.find(
+      (task) => task.id === calendarSelection.taskId,
+    )
+    if (!targetTask) return
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const normalizedSelected = new Date(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      selectedDate.getDate(),
+    )
+    const diffMs = normalizedSelected.getTime() - today.getTime()
+    const diffDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
+
+    if (targetTable.title === "Importantes") {
+      await updateDays(
+        calendarSelection.taskId,
+        diffDays,
+        calendarSelection.tableIndex,
+      )
+    } else if (
+      targetTable.title === "Teoría" ||
+      targetTable.title === "Práctica"
+    ) {
+      const isoDate = formatDateToISO(normalizedSelected)
+      setSubjectDeadlines((prev) => ({
+        ...prev,
+        [makeSubjectKey(targetTable.title, targetTask.text)]: isoDate,
+      }))
+      await saveSubjectDate(
+        targetTask.text,
+        targetTable.title as "Teoría" | "Práctica",
+        isoDate,
+      )
+    }
+
+    setCalendarSelection(null)
+    setIsCalendarMode(false)
   }
 
   const addImportantTask = async () => {
@@ -682,6 +892,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const startDay = new Date(year, month, 1).getDay()
     const cells = []
     const today = new Date()
+    const selectedDate = selectedCalendarTask?.dueDate || null
+    const isSelectingDate = Boolean(calendarSelection)
 
     for (let i = 0; i < startDay; i++) {
       cells.push(<div key={`empty-${i}`} />)
@@ -698,12 +910,25 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         year === today.getFullYear() &&
         month === today.getMonth() &&
         day === today.getDate()
+      const isSelected =
+        selectedDate !== null &&
+        selectedDate.getFullYear() === year &&
+        selectedDate.getMonth() === month &&
+        selectedDate.getDate() === day
 
       cells.push(
-        <div
+        <button
+          type="button"
           key={day}
-          className={`border h-24 p-1 overflow-hidden ${
+          onClick={() => {
+            if (isSelectingDate) {
+              void handleCalendarDateSelection(new Date(year, month, day))
+            }
+          }}
+          className={`border h-24 p-1 overflow-hidden text-left transition-colors ${
             isToday ? "bg-blue-200 dark:bg-blue-900" : ""
+          } ${isSelected ? "ring-2 ring-blue-500" : ""} ${
+            isSelectingDate ? "cursor-pointer hover:border-blue-500" : "cursor-default"
           }`}
         >
           <div className="text-[10px] font-bold">{day}</div>
@@ -717,7 +942,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
               </div>
             ))}
           </div>
-        </div>,
+        </button>,
       )
     }
     return cells
@@ -738,7 +963,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="bg-card p-4 rounded-lg shadow-lg w-full max-w-3xl">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-2">
             <Button
               variant="ghost"
               size="icon"
@@ -747,24 +972,53 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                   (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
                 )
               }
+              aria-label="Mes anterior"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <h2 className="text-xl font-bold capitalize">
-              {calendarDate.toLocaleString("es-ES", { month: "long" })}{" "}
-              {calendarDate.getFullYear()}
-            </h2>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() =>
-                setCalendarDate(
-                  (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
-                )
-              }
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+            <div className="flex-1 text-center">
+              <h2 className="text-xl font-bold capitalize">
+                {calendarDate.toLocaleString("es-ES", { month: "long" })}{" "}
+                {calendarDate.getFullYear()}
+              </h2>
+              {calendarSelection && selectedCalendarTask && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Selecciona la fecha del evento para {" "}
+                  <span className="font-semibold">
+                    {selectedCalendarTask.task.text}
+                  </span>
+                  {selectedCalendarTask.tableTitle
+                    ? ` (${selectedCalendarTask.tableTitle})`
+                    : ""}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() =>
+                  setCalendarDate(
+                    (prev) =>
+                      new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+                  )
+                }
+                aria-label="Mes siguiente"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  setCalendarSelection(null)
+                  setIsCalendarMode(false)
+                }}
+                aria-label="Cerrar calendario"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
           <div className="grid grid-cols-7 gap-2 text-xs text-center mb-2">
             {["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"].map((d) => (
@@ -774,6 +1028,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             ))}
             {renderCalendarCells()}
           </div>
+          {calendarSelection && (
+            <p className="text-xs text-muted-foreground text-center">
+              Haz clic en una fecha para asignar los días restantes de este evento.
+            </p>
+          )}
         </div>
       </div>
     )
@@ -856,10 +1115,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           className={`space-y-3 transition-all duration-300 ${isTransitioning ? "opacity-0 transform translate-x-4" : "opacity-100 transform translate-x-0"}`}
         >
           {currentTable.tasks.map((task) => {
-            const daysRemaining =
-              currentTable.title === "Importantes"
-                ? task.days || 0
-                : task.denominator - task.numerator
+            const daysRemaining = getTaskDaysRemaining(currentTable.title, task)
             const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
             const currentPercentage = getProgressPercentage(task.numerator, task.denominator)
             const averagePercentage = calculateAveragePercentage()
@@ -875,36 +1131,52 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 onMouseLeave={() => setHoveredTaskId(null)}
               >
                 <div
-                  className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
+                  className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg cursor-pointer`}
                   onClick={() => {
-                    setEditingDaysId(task.id)
-                    const current =
-                      currentTable.title === "Importantes"
-                        ? task.days || 0
-                        : task.denominator - task.numerator
-                    setEditDaysValue(String(current))
+                    const today = new Date()
+                    today.setHours(0, 0, 0, 0)
+                    let initialDate = new Date(
+                      today.getFullYear(),
+                      today.getMonth(),
+                      1,
+                    )
+
+                    if (currentTable.title === "Importantes" && typeof task.days === "number") {
+                      const dueDate = new Date(today)
+                      dueDate.setDate(dueDate.getDate() + task.days)
+                      initialDate = new Date(
+                        dueDate.getFullYear(),
+                        dueDate.getMonth(),
+                        1,
+                      )
+                    } else if (
+                      currentTable.title === "Teoría" ||
+                      currentTable.title === "Práctica"
+                    ) {
+                      const rawDeadline = getSubjectDeadline(
+                        currentTable.title,
+                        task.text,
+                      )
+                      const parsed = parseDateInput(rawDeadline)
+                      if (parsed) {
+                        initialDate = new Date(
+                          parsed.getFullYear(),
+                          parsed.getMonth(),
+                          1,
+                        )
+                      }
+                    }
+
+                    setCalendarDate(initialDate)
+                    setCalendarSelection({
+                      taskId: task.id,
+                      tableIndex: currentTableIndex,
+                    })
+                    setIsCalendarMode(true)
                   }}
                 >
                   <IconComponent className={`h-3 w-3 ${iconColor}`} />
-                  {editingDaysId === task.id ? (
-                    <Input
-                      value={editDaysValue}
-                      onChange={(e) => setEditDaysValue(e.target.value)}
-                      onBlur={() => {
-                        updateDays(task.id, Number.parseInt(editDaysValue) || 0)
-                        setEditingDaysId(null)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          updateDays(task.id, Number.parseInt(editDaysValue) || 0)
-                          setEditingDaysId(null)
-                        }
-                      }}
-                      className="w-10 h-4 text-black text-center bg-white rounded"
-                    />
-                  ) : (
-                    <span>{daysRemaining}d</span>
-                  )}
+                  <span>{daysRemaining}d</span>
                 </div>
 
                 <div
