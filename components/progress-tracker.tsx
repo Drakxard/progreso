@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, X } from "lucide-react"
 
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
 const parseDateInput = (input?: string): Date | null => {
   if (!input) return null
   if (/^\d+d$/.test(input)) {
@@ -12,6 +14,12 @@ const parseDateInput = (input?: string): Date | null => {
     const date = new Date()
     date.setDate(date.getDate() + days)
     return date
+  }
+  if (DATE_ONLY_PATTERN.test(input)) {
+    const [year, month, day] = input.split("-").map((part) => Number(part))
+    if (!Number.isNaN(year) && !Number.isNaN(month) && !Number.isNaN(day)) {
+      return new Date(year, month - 1, day)
+    }
   }
   const date = new Date(input)
   return isNaN(date.getTime()) ? null : date
@@ -885,6 +893,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     if (targetTable.title === "Teoría" || targetTable.title === "Práctica") {
       const isoDate = normalizedSelected.toISOString()
+      const dateOnly = isoDate.split("T")[0]
       const tableTitle = targetTable.title
 
       setSubjectSchedules((prev) =>
@@ -894,9 +903,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           }
           return {
             ...subject,
-            theoryDate: tableTitle === "Teoría" ? isoDate : subject.theoryDate,
+            theoryDate: tableTitle === "Teoría" ? dateOnly : subject.theoryDate,
             practiceDate:
-              tableTitle === "Práctica" ? isoDate : subject.practiceDate,
+              tableTitle === "Práctica" ? dateOnly : subject.practiceDate,
             theoryTotal:
               tableTitle === "Teoría"
                 ? Math.max(diffDays, 1)
@@ -911,9 +920,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
       const payload: Record<string, unknown> = { name: task.text }
       if (tableTitle === "Teoría") {
-        payload.theory_date = isoDate
+        payload.theory_date = dateOnly
       } else {
-        payload.practice_date = isoDate
+        payload.practice_date = dateOnly
       }
 
       try {
