@@ -60,6 +60,61 @@ interface SubjectSchedule {
   practiceTotal?: number
 }
 
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
+  }
+  return null
+}
+
+const normalizeImportantTask = (
+  task: {
+    id: string | number
+    text?: string | null
+    numerator?: number | null
+    denominator?: number | null
+    days?: number | null
+    days_remaining?: number | null
+    topics?: string[]
+  },
+): TaskItem => {
+  const rawDenominator = toFiniteNumber(task.denominator)
+  const rawDays = toFiniteNumber(task.days ?? task.days_remaining)
+  const rawNumerator = toFiniteNumber(task.numerator)
+
+  const baseDenominator = rawDenominator ?? rawDays ?? 0
+  const denominator = Math.max(Math.floor(baseDenominator), 1)
+
+  const resolvedNumerator =
+    rawNumerator ?? denominator - (rawDays ?? denominator)
+  const numerator = Math.min(
+    denominator,
+    Math.max(Math.floor(resolvedNumerator), 0),
+  )
+
+  const fallbackDays = Math.max(denominator - numerator, 0)
+  const resolvedDays = rawDays ?? fallbackDays
+  const daysRemaining = Math.min(
+    denominator,
+    Math.max(Math.floor(resolvedDays), 0),
+  )
+
+  return {
+    id: String(task.id),
+    text: task.text ?? "",
+    numerator,
+    denominator,
+    days: daysRemaining,
+    topics: Array.isArray(task.topics) ? [...task.topics] : [],
+  }
+}
+
 export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [currentTableIndex, setCurrentTableIndex] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -449,12 +504,18 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const loadImportantFromLocalStorage = () => {
     const stored = localStorage.getItem("importantTasks")
     if (stored) {
-      const tasks = JSON.parse(stored) as TaskItem[]
+      const tasks = JSON.parse(stored) as (Partial<TaskItem> & {
+        id: string | number
+        days_remaining?: number | null
+      })[]
       setTables((prev) => {
         const newTables = [...prev]
         const index = newTables.findIndex((t) => t.title === "Importantes")
         if (index !== -1) {
-          newTables[index] = { ...newTables[index], tasks }
+          newTables[index] = {
+            ...newTables[index],
+            tasks: tasks.map((task) => normalizeImportantTask(task)),
+          }
         }
         return newTables
       })
@@ -552,24 +613,17 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           const newTables = [...prev]
           const index = newTables.findIndex((t) => t.title === "Importantes")
           if (index !== -1) {
+            const existingTopics = new Map(
+              newTables[index].tasks.map((task) => [task.id, task.topics ?? []]),
+            )
             newTables[index] = {
               ...newTables[index],
-              tasks: tasks.map((t: any) => {
-                const denominator = Math.max(
-                  t.denominator ?? 7,
-                  t.days_remaining ?? 0,
-                )
-                const daysRemaining = t.days_remaining ?? denominator
-                const numerator = denominator - daysRemaining
-                return {
-                  id: String(t.id),
-                  text: t.text,
-                  days: daysRemaining,
-                  numerator,
-                  denominator,
-                  topics: [],
-                }
-              }),
+              tasks: tasks.map((t: any) =>
+                normalizeImportantTask({
+                  ...t,
+                  topics: existingTopics.get(String(t.id)) ?? [],
+                }),
+              ),
             }
           }
           return newTables
@@ -949,17 +1003,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         const newTables = [...prev]
         const index = newTables.findIndex((t) => t.title === "Importantes")
         if (index !== -1) {
-          const denominator = Math.max(task.denominator ?? 7, task.days_remaining ?? 0)
-          const daysRemaining = task.days_remaining ?? denominator
-          const numerator = denominator - daysRemaining
-          newTables[index].tasks.push({
-            id: String(task.id),
-            text: task.text,
-            days: daysRemaining,
-            numerator,
-            denominator,
-            topics: [],
-          })
+          newTables[index] = {
+            ...newTables[index],
+            tasks: [
+              ...newTables[index].tasks,
+              normalizeImportantTask({ ...task, topics: [] }),
+            ],
+          }
         }
         return newTables
       })
