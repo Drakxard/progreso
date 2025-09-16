@@ -20,6 +20,10 @@ const parseDateInput = (input?: string): Date | null => {
 const normalizeDate = (date: Date) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate())
 
+const toUtcIsoDateString = (date: Date) =>
+  new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())).
+    toISOString()
+
 const computeDaysUntil = (targetDate: Date) => {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -884,7 +888,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
 
     if (targetTable.title === "Teoría" || targetTable.title === "Práctica") {
-      const isoDate = normalizedSelected.toISOString()
+      const isoDate = toUtcIsoDateString(normalizedSelected)
       const tableTitle = targetTable.title
 
       setSubjectSchedules((prev) =>
