@@ -31,6 +31,57 @@ const FIXED_SCHEDULE = {
   },
 }
 
+const toISODateString = (date: Date) => date.toISOString().split("T")[0]
+
+const normalizeStoredDate = (value?: string | null | Date): string | undefined => {
+  if (!value) return undefined
+
+  if (value instanceof Date) {
+    return toISODateString(value)
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+    const parsed = new Date(trimmed)
+    return Number.isNaN(parsed.getTime()) ? undefined : toISODateString(parsed)
+  }
+
+  if (/^\d+d$/.test(trimmed)) {
+    const days = Number.parseInt(trimmed.slice(0, -1), 10)
+    if (Number.isNaN(days)) {
+      return undefined
+    }
+    const date = new Date()
+    date.setHours(0, 0, 0, 0)
+    date.setDate(date.getDate() + days)
+    return toISODateString(date)
+  }
+
+  const parsed = new Date(trimmed)
+  return Number.isNaN(parsed.getTime()) ? undefined : toISODateString(parsed)
+}
+
+const createDateFromISO = (isoString: string) => {
+  const [yearStr, monthStr, dayStr] = isoString.split("-")
+  const year = Number.parseInt(yearStr ?? "", 10)
+  const month = Number.parseInt(monthStr ?? "", 10)
+  const day = Number.parseInt(dayStr ?? "", 10)
+
+  if ([year, month, day].some((value) => Number.isNaN(value))) {
+    return null
+  }
+
+  return new Date(year, month - 1, day)
+}
+
 export default function PDFManager() {
   const [showConfigForm, setShowConfigForm] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
@@ -69,9 +120,12 @@ export default function PDFManager() {
           if (categoryIndex !== -1) {
             loadedCategories[categoryIndex] = {
               name: subject.name as Category,
-              count: subject.pdf_count,
-              theoryDate: subject.theory_date || undefined,
-              practiceDate: subject.practice_date || undefined,
+              count:
+                typeof subject.pdf_count === "number"
+                  ? subject.pdf_count
+                  : Number(subject.pdf_count ?? 0),
+              theoryDate: normalizeStoredDate(subject.theory_date) ?? undefined,
+              practiceDate: normalizeStoredDate(subject.practice_date) ?? undefined,
             }
           }
         })
@@ -88,6 +142,8 @@ export default function PDFManager() {
   const saveDataToDatabase = async (updatedCategories: CategoryData[]) => {
     try {
       for (const category of updatedCategories) {
+        const normalizedTheoryDate = normalizeStoredDate(category.theoryDate)
+        const normalizedPracticeDate = normalizeStoredDate(category.practiceDate)
         await fetch("/api/subjects", {
           method: "PUT",
           headers: {
@@ -96,8 +152,8 @@ export default function PDFManager() {
           body: JSON.stringify({
             name: category.name,
             pdf_count: category.count,
-            theory_date: category.theoryDate || null,
-            practice_date: category.practiceDate || null,
+            theory_date: normalizedTheoryDate ?? null,
+            practice_date: normalizedPracticeDate ?? null,
           }),
         })
       }
@@ -119,19 +175,53 @@ export default function PDFManager() {
   }
 
   const generateFixedDates = () => {
-    const updatedCategories = categories.map((category) => {
-      const schedule = FIXED_SCHEDULE[category.name as keyof typeof FIXED_SCHEDULE]
-      const theoryDays = calculateDaysRemaining(schedule.theory)
-      const practiceDays = calculateDaysRemaining(schedule.practice)
+    setCategories((prevCategories) => {
+      let hasChanges = false
 
-      return {
-        ...category,
-        theoryDate: `${theoryDays}d`,
-        practiceDate: `${practiceDays}d`,
-      }
+      const updated = prevCategories.map((category) => {
+        const schedule = FIXED_SCHEDULE[category.name as keyof typeof FIXED_SCHEDULE]
+        if (!schedule) {
+          return category
+        }
+
+        let theoryDate = normalizeStoredDate(category.theoryDate)
+        let practiceDate = normalizeStoredDate(category.practiceDate)
+
+        if (!theoryDate) {
+          const theoryTarget = new Date()
+          theoryTarget.setHours(0, 0, 0, 0)
+          theoryTarget.setDate(
+            theoryTarget.getDate() + calculateDaysRemaining(schedule.theory),
+          )
+          theoryDate = toISODateString(theoryTarget)
+        }
+
+        if (!practiceDate) {
+          const practiceTarget = new Date()
+          practiceTarget.setHours(0, 0, 0, 0)
+          practiceTarget.setDate(
+            practiceTarget.getDate() + calculateDaysRemaining(schedule.practice),
+          )
+          practiceDate = toISODateString(practiceTarget)
+        }
+
+        if (
+          theoryDate === category.theoryDate &&
+          practiceDate === category.practiceDate
+        ) {
+          return category
+        }
+
+        hasChanges = true
+        return {
+          ...category,
+          theoryDate,
+          practiceDate,
+        }
+      })
+
+      return hasChanges ? updated : prevCategories
     })
-
-    setCategories(updatedCategories)
   }
 
   useEffect(() => {
@@ -183,6 +273,15 @@ export default function PDFManager() {
     return `${dayName} ${dayNumber} de ${month}`
   }
 
+  const formatCategoryDate = (value?: string) => {
+    if (!value) return undefined
+    const normalized = normalizeStoredDate(value)
+    if (!normalized) return undefined
+    const parsed = createDateFromISO(normalized)
+    if (!parsed) return undefined
+    return formatDate(parsed)
+  }
+
   const generateCalendarDays = () => {
     const today = new Date()
     const currentMonth = today.getMonth()
@@ -209,13 +308,16 @@ export default function PDFManager() {
     const today = new Date()
     const selectedDateObj = new Date(today.getFullYear(), today.getMonth(), day)
     const formattedDate = formatDate(selectedDateObj)
+    const isoDate = toISODateString(selectedDateObj)
     setSelectedDate(formattedDate)
 
     const updatedCategories = categories.map((cat) =>
       cat.name === subjects[currentStep]
         ? {
             ...cat,
-            ...(currentTable === "Teoría" ? { theoryDate: formattedDate } : { practiceDate: formattedDate }),
+            ...(currentTable === "Teoría"
+              ? { theoryDate: isoDate }
+              : { practiceDate: isoDate }),
           }
         : cat,
     )
@@ -416,21 +518,30 @@ export default function PDFManager() {
                 <h2 className="text-xl font-bold text-center text-gray-900">Estado Actual</h2>
 
                 <div className="space-y-3">
-                  {categories.map((category) => (
-                    <div
-                      key={category.name}
-                      className="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0"
-                    >
-                      <span className="font-medium text-gray-700">{category.name}</span>
-                      <div className="text-right text-sm">
-                        <div className="text-gray-600">
-                          {category.count} pdf{category.count !== 1 ? "s" : ""}
+                  {categories.map((category) => {
+                    const theoryDisplay = formatCategoryDate(category.theoryDate)
+                    const practiceDisplay = formatCategoryDate(category.practiceDate)
+
+                    return (
+                      <div
+                        key={category.name}
+                        className="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0"
+                      >
+                        <span className="font-medium text-gray-700">{category.name}</span>
+                        <div className="text-right text-sm">
+                          <div className="text-gray-600">
+                            {category.count} pdf{category.count !== 1 ? "s" : ""}
+                          </div>
+                          {theoryDisplay && (
+                            <div className="text-blue-600">T: {theoryDisplay}</div>
+                          )}
+                          {practiceDisplay && (
+                            <div className="text-green-600">P: {practiceDisplay}</div>
+                          )}
                         </div>
-                        {category.theoryDate && <div className="text-blue-600">T: {category.theoryDate}</div>}
-                        {category.practiceDate && <div className="text-green-600">P: {category.practiceDate}</div>}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
 
                 <Button

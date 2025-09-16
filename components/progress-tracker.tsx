@@ -13,9 +13,21 @@ const parseDateInput = (input?: string): Date | null => {
     date.setDate(date.getDate() + days)
     return date
   }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    const [yearStr, monthStr, dayStr] = input.split("-")
+    const year = Number.parseInt(yearStr ?? "", 10)
+    const month = Number.parseInt(monthStr ?? "", 10)
+    const day = Number.parseInt(dayStr ?? "", 10)
+    if ([year, month, day].some((value) => Number.isNaN(value))) {
+      return null
+    }
+    return new Date(year, month - 1, day)
+  }
   const date = new Date(input)
   return isNaN(date.getTime()) ? null : date
 }
+
+const toISODateOnly = (date: Date) => date.toISOString().split("T")[0]
 
 const normalizeDate = (date: Date) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate())
@@ -884,7 +896,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
 
     if (targetTable.title === "Teoría" || targetTable.title === "Práctica") {
-      const isoDate = normalizedSelected.toISOString()
+      const isoDate = toISODateOnly(normalizedSelected)
       const tableTitle = targetTable.title
 
       setSubjectSchedules((prev) =>
