@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
@@ -14,6 +14,8 @@ interface CategoryData {
   count: number
   theoryDate?: string
   practiceDate?: string
+  theoryDisplay?: string
+  practiceDisplay?: string
 }
 
 const FIXED_SCHEDULE = {
@@ -29,6 +31,103 @@ const FIXED_SCHEDULE = {
     theory: 2, // Martes
     practice: 5, // Viernes
   },
+}
+
+const SPANISH_MONTHS: Record<string, number> = {
+  enero: 0,
+  febrero: 1,
+  marzo: 2,
+  abril: 3,
+  mayo: 4,
+  junio: 5,
+  julio: 6,
+  agosto: 7,
+  septiembre: 8,
+  setiembre: 8,
+  octubre: 9,
+  noviembre: 10,
+  diciembre: 11,
+}
+
+const normalizeToStartOfDay = (date: Date) => {
+  const normalized = new Date(date)
+  normalized.setHours(0, 0, 0, 0)
+  return normalized
+}
+
+const parseStoredDateString = (value?: string | null): Date | null => {
+  if (!value) return null
+
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  if (/^\d+d$/.test(trimmed)) {
+    const days = Number.parseInt(trimmed.slice(0, -1), 10)
+    if (!Number.isNaN(days)) {
+      const today = normalizeToStartOfDay(new Date())
+      today.setDate(today.getDate() + days)
+      return today
+    }
+  }
+
+  const directParse = new Date(trimmed)
+  if (!Number.isNaN(directParse.getTime())) {
+    return normalizeToStartOfDay(directParse)
+  }
+
+  const match = trimmed
+    .toLowerCase()
+    .match(/^(?:[a-záéíóúüñ]+)\s+(\d{1,2})\s+de\s+([a-záéíóúüñ]+)/i)
+  if (match) {
+    const day = Number.parseInt(match[1], 10)
+    const monthName = match[2].toLowerCase()
+    const month = SPANISH_MONTHS[monthName]
+    if (!Number.isNaN(day) && month !== undefined) {
+      const today = new Date()
+      const candidate = new Date(today.getFullYear(), month, day)
+      if (!Number.isNaN(candidate.getTime())) {
+        return normalizeToStartOfDay(candidate)
+      }
+    }
+  }
+
+  return null
+}
+
+const normalizeStoredDate = (value?: string | null): string | undefined => {
+  const parsed = parseStoredDateString(value)
+  return parsed ? parsed.toISOString() : undefined
+}
+
+const calculateDaysRemaining = (targetDay: number): number => {
+  const today = new Date()
+  const currentDay = today.getDay()
+
+  let daysUntil = targetDay - currentDay
+  if (daysUntil <= 0) {
+    daysUntil += 7
+  }
+
+  return daysUntil
+}
+
+const formatRemainingDaysDisplay = (
+  storedDate?: string,
+  fallbackWeekday?: number,
+): string | undefined => {
+  const parsed = parseStoredDateString(storedDate)
+  if (parsed) {
+    const today = normalizeToStartOfDay(new Date())
+    const diffMs = parsed.getTime() - today.getTime()
+    const diffDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
+    return `${diffDays}d`
+  }
+
+  if (typeof fallbackWeekday === "number") {
+    return `${calculateDaysRemaining(fallbackWeekday)}d`
+  }
+
+  return undefined
 }
 
 export default function PDFManager() {
@@ -50,6 +149,28 @@ export default function PDFManager() {
 
   const subjects = ["Álgebra", "Cálculo", "Poo"] as const
   const isComplete = currentStep >= subjects.length
+  const trackerInitialData = useMemo(
+    () =>
+      categories.map((category) => {
+        const schedule = FIXED_SCHEDULE[category.name as keyof typeof FIXED_SCHEDULE]
+        const theoryFallback =
+          schedule?.theory !== undefined
+            ? `${calculateDaysRemaining(schedule.theory)}d`
+            : undefined
+        const practiceFallback =
+          schedule?.practice !== undefined
+            ? `${calculateDaysRemaining(schedule.practice)}d`
+            : undefined
+
+        return {
+          name: category.name,
+          count: category.count,
+          theoryDate: category.theoryDate ?? theoryFallback,
+          practiceDate: category.practiceDate ?? practiceFallback,
+        }
+      }),
+    [categories],
+  )
 
   const loadDataFromDatabase = async () => {
     try {
@@ -70,13 +191,13 @@ export default function PDFManager() {
             loadedCategories[categoryIndex] = {
               name: subject.name as Category,
               count: subject.pdf_count,
-              theoryDate: subject.theory_date || undefined,
-              practiceDate: subject.practice_date || undefined,
+              theoryDate: normalizeStoredDate(subject.theory_date),
+              practiceDate: normalizeStoredDate(subject.practice_date),
             }
           }
         })
 
-        setCategories(loadedCategories)
+        setCategories(applyDisplayFields(loadedCategories))
       }
     } catch (error) {
       console.error("Error loading data:", error)
@@ -106,45 +227,53 @@ export default function PDFManager() {
     }
   }
 
-  const calculateDaysRemaining = (targetDay: number): number => {
-    const today = new Date()
-    const currentDay = today.getDay()
+  const applyDisplayFields = useCallback((data: CategoryData[]): CategoryData[] => {
+    let hasChanges = false
 
-    let daysUntil = targetDay - currentDay
-    if (daysUntil <= 0) {
-      daysUntil += 7
-    }
-
-    return daysUntil
-  }
-
-  const generateFixedDates = () => {
-    const updatedCategories = categories.map((category) => {
+    const mapped = data.map((category) => {
       const schedule = FIXED_SCHEDULE[category.name as keyof typeof FIXED_SCHEDULE]
-      const theoryDays = calculateDaysRemaining(schedule.theory)
-      const practiceDays = calculateDaysRemaining(schedule.practice)
+      const theoryDisplay = formatRemainingDaysDisplay(
+        category.theoryDate,
+        schedule?.theory,
+      )
+      const practiceDisplay = formatRemainingDaysDisplay(
+        category.practiceDate,
+        schedule?.practice,
+      )
 
+      if (
+        category.theoryDisplay === theoryDisplay &&
+        category.practiceDisplay === practiceDisplay
+      ) {
+        return category
+      }
+
+      hasChanges = true
       return {
         ...category,
-        theoryDate: `${theoryDays}d`,
-        practiceDate: `${practiceDays}d`,
+        theoryDisplay,
+        practiceDisplay,
       }
     })
 
-    setCategories(updatedCategories)
-  }
+    return hasChanges ? mapped : data
+  }, [])
 
   useEffect(() => {
     loadDataFromDatabase()
   }, [])
 
   useEffect(() => {
-    if (!isLoading) {
-      generateFixedDates()
-      const interval = setInterval(generateFixedDates, 60000)
-      return () => clearInterval(interval)
-    }
-  }, [isLoading, categories.length])
+    if (isLoading) return
+
+    setCategories((prev) => applyDisplayFields(prev))
+
+    const interval = setInterval(() => {
+      setCategories((prev) => applyDisplayFields(prev))
+    }, 60000)
+
+    return () => clearInterval(interval)
+  }, [isLoading, applyDisplayFields])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -209,15 +338,20 @@ export default function PDFManager() {
     const today = new Date()
     const selectedDateObj = new Date(today.getFullYear(), today.getMonth(), day)
     const formattedDate = formatDate(selectedDateObj)
+    const isoDate = normalizeToStartOfDay(selectedDateObj).toISOString()
     setSelectedDate(formattedDate)
 
-    const updatedCategories = categories.map((cat) =>
-      cat.name === subjects[currentStep]
-        ? {
-            ...cat,
-            ...(currentTable === "Teoría" ? { theoryDate: formattedDate } : { practiceDate: formattedDate }),
-          }
-        : cat,
+    const updatedCategories = applyDisplayFields(
+      categories.map((cat) =>
+        cat.name === subjects[currentStep]
+          ? {
+              ...cat,
+              ...(currentTable === "Teoría"
+                ? { theoryDate: isoDate }
+                : { practiceDate: isoDate }),
+            }
+          : cat,
+      ),
     )
 
     setCategories(updatedCategories)
@@ -228,8 +362,10 @@ export default function PDFManager() {
     if (inputValue && !isComplete) {
       const count = Number.parseInt(inputValue)
       if (!isNaN(count) && count >= 0) {
-        const updatedCategories = categories.map((cat) =>
-          cat.name === subjects[currentStep] ? { ...cat, count } : cat,
+        const updatedCategories = applyDisplayFields(
+          categories.map((cat) =>
+            cat.name === subjects[currentStep] ? { ...cat, count } : cat,
+          ),
         )
         setCategories(updatedCategories)
         await saveDataToDatabase(updatedCategories)
@@ -242,11 +378,11 @@ export default function PDFManager() {
   }
 
   const handleReset = async () => {
-    const resetCategories = [
+    const resetCategories = applyDisplayFields([
       { name: "Álgebra" as Category, count: 0 },
       { name: "Cálculo" as Category, count: 0 },
       { name: "Poo" as Category, count: 0 },
-    ]
+    ])
 
     setCurrentStep(0)
     setCurrentTable("Teoría")
@@ -261,7 +397,7 @@ export default function PDFManager() {
   const handleBackToTracker = () => {
     setShowConfigForm(false)
     setShowProgressTracker(true)
-    generateFixedDates()
+    setCategories((prev) => applyDisplayFields(prev))
   }
 
   useEffect(() => {
@@ -308,7 +444,7 @@ export default function PDFManager() {
   }
 
   if (showProgressTracker && !showConfigForm) {
-    return <ProgressTracker initialData={categories} />
+    return <ProgressTracker initialData={trackerInitialData} />
   }
 
   if (showConfigForm) {
@@ -426,8 +562,12 @@ export default function PDFManager() {
                         <div className="text-gray-600">
                           {category.count} pdf{category.count !== 1 ? "s" : ""}
                         </div>
-                        {category.theoryDate && <div className="text-blue-600">T: {category.theoryDate}</div>}
-                        {category.practiceDate && <div className="text-green-600">P: {category.practiceDate}</div>}
+                        {category.theoryDisplay && (
+                          <div className="text-blue-600">T: {category.theoryDisplay}</div>
+                        )}
+                        {category.practiceDisplay && (
+                          <div className="text-green-600">P: {category.practiceDisplay}</div>
+                        )}
                       </div>
                     </div>
                   ))}

@@ -555,17 +555,31 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             newTables[index] = {
               ...newTables[index],
               tasks: tasks.map((t: any) => {
+                const rawDenominator = Number.isFinite(t.denominator)
+                  ? Number(t.denominator)
+                  : Number.parseInt(t.denominator ?? "", 10)
                 const denominator = Math.max(
-                  t.denominator ?? 7,
-                  t.days_remaining ?? 0,
+                  Number.isNaN(rawDenominator) ? 1 : rawDenominator,
+                  1,
                 )
-                const daysRemaining = t.days_remaining ?? denominator
-                const numerator = denominator - daysRemaining
+                const rawNumerator = Number.isFinite(t.numerator)
+                  ? Number(t.numerator)
+                  : Number.parseInt(t.numerator ?? "", 10)
+                const normalizedNumerator = Math.min(
+                  Math.max(Number.isNaN(rawNumerator) ? 0 : rawNumerator, 0),
+                  denominator,
+                )
+                const rawDays = Number.isFinite(t.days_remaining)
+                  ? Number(t.days_remaining)
+                  : Number.parseInt(t.days_remaining ?? "", 10)
+                const normalizedDays = Number.isNaN(rawDays)
+                  ? Math.max(denominator - normalizedNumerator, 0)
+                  : Math.max(rawDays, 0)
                 return {
                   id: String(t.id),
-                  text: t.text,
-                  days: daysRemaining,
-                  numerator,
+                  text: t.text ?? "",
+                  days: normalizedDays,
+                  numerator: normalizedNumerator,
                   denominator,
                   topics: [],
                 }
@@ -726,6 +740,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     setEditText("")
 
     if (currentTable.title === "Importantes" && updatedTask) {
+      const normalizedDays =
+        typeof updatedTask.days === "number"
+          ? Math.max(updatedTask.days, 0)
+          : Math.max(updatedTask.denominator - updatedTask.numerator, 0)
       await fetch("/api/important", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -734,7 +752,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           text: updatedTask.text,
           numerator: updatedTask.numerator,
           denominator: updatedTask.denominator,
-          days_remaining: updatedTask.days || 0,
+          days_remaining: normalizedDays,
         }),
       })
     }
@@ -949,14 +967,31 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         const newTables = [...prev]
         const index = newTables.findIndex((t) => t.title === "Importantes")
         if (index !== -1) {
-          const denominator = Math.max(task.denominator ?? 7, task.days_remaining ?? 0)
-          const daysRemaining = task.days_remaining ?? denominator
-          const numerator = denominator - daysRemaining
+          const rawDenominator = Number.isFinite(task.denominator)
+            ? Number(task.denominator)
+            : Number.parseInt(task.denominator ?? "", 10)
+          const denominator = Math.max(
+            Number.isNaN(rawDenominator) ? 1 : rawDenominator,
+            1,
+          )
+          const rawNumerator = Number.isFinite(task.numerator)
+            ? Number(task.numerator)
+            : Number.parseInt(task.numerator ?? "", 10)
+          const normalizedNumerator = Math.min(
+            Math.max(Number.isNaN(rawNumerator) ? 0 : rawNumerator, 0),
+            denominator,
+          )
+          const rawDays = Number.isFinite(task.days_remaining)
+            ? Number(task.days_remaining)
+            : Number.parseInt(task.days_remaining ?? "", 10)
+          const normalizedDays = Number.isNaN(rawDays)
+            ? Math.max(denominator - normalizedNumerator, 0)
+            : Math.max(rawDays, 0)
           newTables[index].tasks.push({
             id: String(task.id),
-            text: task.text,
-            days: daysRemaining,
-            numerator,
+            text: task.text ?? "",
+            days: normalizedDays,
+            numerator: normalizedNumerator,
             denominator,
             topics: [],
           })
