@@ -2,6 +2,33 @@ import { neon } from "@neondatabase/serverless"
 
 const sql = neon(process.env.DATABASE_URL!)
 
+async function ensureProgressTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS progress (
+      id SERIAL PRIMARY KEY,
+      subject_name TEXT NOT NULL,
+      table_type TEXT NOT NULL CHECK (table_type IN ('theory', 'practice')),
+      current_progress INTEGER DEFAULT 0,
+      total_pdfs INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `
+
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_progress_subject_table
+      ON progress(subject_name, table_type)
+  `
+
+  await sql`
+    INSERT INTO progress (subject_name, table_type, current_progress, total_pdfs)
+    SELECT s.name, v.table_type, 0, 0
+    FROM subjects s
+    CROSS JOIN (VALUES ('theory'), ('practice')) AS v(table_type)
+    ON CONFLICT (subject_name, table_type) DO NOTHING
+  `
+}
+
 async function ensureImportantTasksTable() {
   await sql`
     CREATE TABLE IF NOT EXISTS important_tasks (
@@ -85,6 +112,7 @@ export async function updateSubject(name: string, data: Partial<Subject>) {
 }
 
 export async function getProgress(): Promise<Progress[]> {
+  await ensureProgressTable()
   const result = await sql`SELECT * FROM progress ORDER BY subject_name, table_type`
   return result as Progress[]
 }
@@ -95,12 +123,18 @@ export async function updateProgress(
   currentProgress: number,
   totalPdfs: number,
 ) {
+  await ensureProgressTable()
+  const safeCurrent = Math.max(Math.floor(currentProgress), 0)
+  const safeTotal = Math.max(Math.floor(totalPdfs), 0)
+
   await sql`
-    UPDATE progress
-    SET current_progress = ${currentProgress},
-        total_pdfs = ${totalPdfs},
+    INSERT INTO progress (subject_name, table_type, current_progress, total_pdfs)
+    VALUES (${subjectName}, ${tableType}, ${safeCurrent}, ${safeTotal})
+    ON CONFLICT (subject_name, table_type)
+    DO UPDATE
+    SET current_progress = EXCLUDED.current_progress,
+        total_pdfs = EXCLUDED.total_pdfs,
         updated_at = CURRENT_TIMESTAMP
-    WHERE subject_name = ${subjectName} AND table_type = ${tableType}
   `
 }
 
