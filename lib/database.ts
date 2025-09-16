@@ -96,11 +96,25 @@ export async function updateProgress(
   totalPdfs: number,
 ) {
   await sql`
-    UPDATE progress
-    SET current_progress = ${currentProgress},
-        total_pdfs = ${totalPdfs},
-        updated_at = CURRENT_TIMESTAMP
-    WHERE subject_name = ${subjectName} AND table_type = ${tableType}
+    INSERT INTO progress (
+      subject_name,
+      table_type,
+      current_progress,
+      total_pdfs,
+      updated_at
+    )
+    VALUES (
+      ${subjectName},
+      ${tableType},
+      ${currentProgress},
+      ${totalPdfs},
+      CURRENT_TIMESTAMP
+    )
+    ON CONFLICT (subject_name, table_type)
+    DO UPDATE SET
+      current_progress = EXCLUDED.current_progress,
+      total_pdfs = EXCLUDED.total_pdfs,
+      updated_at = CURRENT_TIMESTAMP
   `
 }
 

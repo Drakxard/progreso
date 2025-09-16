@@ -103,8 +103,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           count: subject.count,
           theoryDate: subject.theoryDate ?? existing?.theoryDate,
           practiceDate: subject.practiceDate ?? existing?.practiceDate,
-          theoryTotal: existing?.theoryTotal ?? 7,
-          practiceTotal: existing?.practiceTotal ?? 7,
+          theoryTotal: Math.max(existing?.theoryTotal ?? 0, 7),
+          practiceTotal: Math.max(existing?.practiceTotal ?? 0, 7),
         }
       }),
     )
@@ -157,11 +157,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           }
 
           const diffDays = computeDaysUntil(eventDate)
+          const minimumCycle = 7
           const baselineTotal =
             total && total > 0
-              ? Math.max(total, diffDays)
-              : Math.max(diffDays, task.denominator)
-          const newDenominator = Math.max(baselineTotal, 1)
+              ? Math.max(total, diffDays, minimumCycle)
+              : Math.max(diffDays, task.denominator, minimumCycle)
+          const newDenominator = Math.max(baselineTotal, minimumCycle)
           const newNumerator = Math.min(
             newDenominator,
             Math.max(newDenominator - diffDays, 0),
@@ -420,8 +421,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
               count: subject.pdf_count ?? existing?.count ?? 0,
               theoryDate: subject.theory_date ?? existing?.theoryDate,
               practiceDate: subject.practice_date ?? existing?.practiceDate,
-              theoryTotal: existing?.theoryTotal ?? 7,
-              practiceTotal: existing?.practiceTotal ?? 7,
+              theoryTotal: Math.max(existing?.theoryTotal ?? 0, 7),
+              practiceTotal: Math.max(existing?.practiceTotal ?? 0, 7),
             }
           })
 
@@ -497,8 +498,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
                 if (savedProgress) {
                   const denominator = Math.max(
-                    savedProgress.total_pdfs ?? task.denominator ?? 0,
-                    1,
+                    savedProgress.total_pdfs ?? 0,
+                    task.denominator ?? 0,
+                    7,
                   )
                   const numerator = Math.min(
                     denominator,
@@ -525,12 +527,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
               ...subject,
               theoryTotal:
                 theoryRecord && theoryRecord.total_pdfs
-                  ? Math.max(theoryRecord.total_pdfs, 1)
-                  : subject.theoryTotal ?? 7,
+                  ? Math.max(theoryRecord.total_pdfs, 7)
+                  : Math.max(subject.theoryTotal ?? 0, 7),
               practiceTotal:
                 practiceRecord && practiceRecord.total_pdfs
-                  ? Math.max(practiceRecord.total_pdfs, 1)
-                  : subject.practiceTotal ?? 7,
+                  ? Math.max(practiceRecord.total_pdfs, 7)
+                  : Math.max(subject.practiceTotal ?? 0, 7),
             }
           }),
         )
@@ -792,7 +794,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     id: string,
     days: number,
     tableIndexOverride?: number,
-    options?: { eventDate?: Date },
+    options?: { eventDate?: Date; targetTotal?: number },
   ) => {
     const targetTableIndex =
       tableIndexOverride !== undefined ? tableIndexOverride : currentTableIndex
@@ -805,7 +807,6 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     const task = targetTable.tasks[taskIndex]
     const normalizedDays = Math.max(0, days)
-    const isCalendarUpdate = Boolean(options?.eventDate)
 
     if (targetTable.title === "Importantes") {
       const newDenominator = Math.max(task.denominator, normalizedDays, 1)
@@ -834,9 +835,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       return
     }
 
-    const newDenominator = isCalendarUpdate
-      ? Math.max(normalizedDays, 1)
-      : Math.max(task.denominator, normalizedDays, 1)
+    const minimumCycle =
+      targetTable.title === "Teoría" || targetTable.title === "Práctica" ? 7 : 1
+    const baseDenominator = Math.max(
+      options?.targetTotal ?? task.denominator ?? 0,
+      minimumCycle,
+    )
+    const newDenominator = Math.max(baseDenominator, normalizedDays, minimumCycle)
     const newNumerator = Math.min(
       newDenominator,
       Math.max(newDenominator - normalizedDays, 0),
@@ -848,6 +853,20 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       days: normalizedDays,
     }
     setTables(newTables)
+
+    if (targetTable.title === "Teoría" || targetTable.title === "Práctica") {
+      setSubjectSchedules((prev) =>
+        prev.map((subject) => {
+          if (subject.name !== task.text) {
+            return subject
+          }
+          if (targetTable.title === "Teoría") {
+            return { ...subject, theoryTotal: Math.max(newDenominator, 7) }
+          }
+          return { ...subject, practiceTotal: Math.max(newDenominator, 7) }
+        }),
+      )
+    }
     await saveProgressToDatabase(
       task.text,
       targetTable.title as "Teoría" | "Práctica",
@@ -883,14 +902,28 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       return
     }
 
+    let targetTotal: number | undefined
     if (targetTable.title === "Teoría" || targetTable.title === "Práctica") {
       const isoDate = normalizedSelected.toISOString()
       const tableTitle = targetTable.title
+      const existingSchedule = subjectSchedules.find(
+        (item) => item.name === task.text,
+      )
+      const fallbackTotal = Math.max(task.denominator ?? 0, 7)
+      const previousTotal =
+        tableTitle === "Teoría"
+          ? existingSchedule?.theoryTotal ?? fallbackTotal
+          : existingSchedule?.practiceTotal ?? fallbackTotal
+      targetTotal = Math.max(previousTotal, diffDays, 7)
 
       setSubjectSchedules((prev) =>
         prev.map((subject) => {
           if (subject.name !== task.text) {
-            return subject
+            return {
+              ...subject,
+              theoryTotal: Math.max(subject.theoryTotal ?? 0, 7),
+              practiceTotal: Math.max(subject.practiceTotal ?? 0, 7),
+            }
           }
           return {
             ...subject,
@@ -899,12 +932,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
               tableTitle === "Práctica" ? isoDate : subject.practiceDate,
             theoryTotal:
               tableTitle === "Teoría"
-                ? Math.max(diffDays, 1)
-                : subject.theoryTotal ?? 7,
+                ? targetTotal
+                : Math.max(subject.theoryTotal ?? 0, 7),
             practiceTotal:
               tableTitle === "Práctica"
-                ? Math.max(diffDays, 1)
-                : subject.practiceTotal ?? 7,
+                ? targetTotal
+                : Math.max(subject.practiceTotal ?? 0, 7),
           }
         }),
       )
@@ -931,7 +964,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       calendarSelection.taskId,
       diffDays,
       calendarSelection.tableIndex,
-      { eventDate: normalizedSelected },
+      { eventDate: normalizedSelected, targetTotal },
     )
     setCalendarSelection(null)
     setIsCalendarMode(false)
