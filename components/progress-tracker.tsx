@@ -13,8 +13,18 @@ const parseDateInput = (input?: string): Date | null => {
     date.setDate(date.getDate() + days)
     return date
   }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    const [year, month, day] = input.split("-").map(Number)
+    return new Date(year, month - 1, day)
+  }
   const date = new Date(input)
-  return isNaN(date.getTime()) ? null : date
+  if (isNaN(date.getTime())) {
+    return null
+  }
+  if (/[zZ]$/.test(input) || /[+-]\d{2}:\d{2}$/.test(input)) {
+    return new Date(date.getTime() + date.getTimezoneOffset() * 60000)
+  }
+  return date
 }
 
 const normalizeDate = (date: Date) =>
@@ -26,6 +36,13 @@ const computeDaysUntil = (targetDate: Date) => {
   const normalizedSelected = normalizeDate(targetDate)
   const diffMs = normalizedSelected.getTime() - today.getTime()
   return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
+}
+
+const formatDateForStorage = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
 }
 
 interface TaskItem {
@@ -884,7 +901,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
 
     if (targetTable.title === "Teoría" || targetTable.title === "Práctica") {
-      const isoDate = normalizedSelected.toISOString()
+      const storedDate = formatDateForStorage(normalizedSelected)
       const tableTitle = targetTable.title
 
       setSubjectSchedules((prev) =>
@@ -894,9 +911,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           }
           return {
             ...subject,
-            theoryDate: tableTitle === "Teoría" ? isoDate : subject.theoryDate,
+            theoryDate:
+              tableTitle === "Teoría" ? storedDate : subject.theoryDate,
             practiceDate:
-              tableTitle === "Práctica" ? isoDate : subject.practiceDate,
+              tableTitle === "Práctica" ? storedDate : subject.practiceDate,
             theoryTotal:
               tableTitle === "Teoría"
                 ? Math.max(diffDays, 1)
@@ -911,9 +929,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
       const payload: Record<string, unknown> = { name: task.text }
       if (tableTitle === "Teoría") {
-        payload.theory_date = isoDate
+        payload.theory_date = storedDate
       } else {
-        payload.practice_date = isoDate
+        payload.practice_date = storedDate
       }
 
       try {
