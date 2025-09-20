@@ -45,6 +45,18 @@ const formatDateForStorage = (date: Date) => {
   return `${year}-${month}-${day}`
 }
 
+const ABSOLUTE_DATE_REGEX = /^\d{4}-\d{2}-\d{2}(?:$|T)/
+
+const rollDateForwardWeekly = (date: Date, today: Date) => {
+  let nextDate = normalizeDate(date)
+  while (nextDate <= today) {
+    nextDate = normalizeDate(
+      new Date(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate() + 7),
+    )
+  }
+  return nextDate
+}
+
 interface TaskItem {
   id: string
   text: string
@@ -127,7 +139,43 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     )
   }, [initialData])
 
+  const persistSubjectScheduleUpdates = useCallback(
+    (updates: Record<string, { theoryDate?: string; practiceDate?: string }>) => {
+      const requests = Object.entries(updates)
+        .map(([name, update]) => {
+          if (!update.theoryDate && !update.practiceDate) {
+            return null
+          }
+
+          const payload: Record<string, unknown> = { name }
+          if (update.theoryDate) {
+            payload.theory_date = update.theoryDate
+          }
+          if (update.practiceDate) {
+            payload.practice_date = update.practiceDate
+          }
+
+          return fetch("/api/subjects", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+        })
+        .filter((request): request is Promise<Response> => request !== null)
+
+      if (requests.length > 0) {
+        void Promise.all(requests).catch((error) => {
+          console.error("Error updating recurring subject dates:", error)
+        })
+      }
+    },
+    [],
+  )
+
   const syncCountdowns = useCallback((schedules: SubjectSchedule[]) => {
+    const todayNormalized = normalizeDate(new Date())
+    const rolledUpdates: Record<string, { theoryDate?: string; practiceDate?: string }> = {}
+
     setTables((prevTables) => {
       let tablesChanged = false
 
@@ -173,7 +221,25 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             return task
           }
 
-          const diffDays = computeDaysUntil(eventDate)
+          const normalizedEventDate = normalizeDate(eventDate)
+          let effectiveEventDate = normalizedEventDate
+
+          if (rawDate && ABSOLUTE_DATE_REGEX.test(rawDate.trim())) {
+            const rolledDate = rollDateForwardWeekly(normalizedEventDate, todayNormalized)
+            if (rolledDate.getTime() !== normalizedEventDate.getTime()) {
+              effectiveEventDate = rolledDate
+              const storedDate = formatDateForStorage(rolledDate)
+              const existingUpdate = rolledUpdates[task.text] ?? {}
+              if (tableType === "theory") {
+                existingUpdate.theoryDate = storedDate
+              } else {
+                existingUpdate.practiceDate = storedDate
+              }
+              rolledUpdates[task.text] = existingUpdate
+            }
+          }
+
+          const diffDays = computeDaysUntil(effectiveEventDate)
           const baselineTotal =
             total && total > 0
               ? Math.max(total, diffDays)
@@ -211,7 +277,52 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
       return tablesChanged ? updatedTables : prevTables
     })
-  }, [])
+
+    if (Object.keys(rolledUpdates).length > 0) {
+      let shouldPersist = false
+      setSubjectSchedules((prev) => {
+        let didChange = false
+        const next = prev.map((subject) => {
+          const update = rolledUpdates[subject.name]
+          if (!update) {
+            return subject
+          }
+
+          let subjectChanged = false
+          const updatedSubject: SubjectSchedule = { ...subject }
+
+          if (update.theoryDate && update.theoryDate !== subject.theoryDate) {
+            updatedSubject.theoryDate = update.theoryDate
+            subjectChanged = true
+          }
+
+          if (update.practiceDate && update.practiceDate !== subject.practiceDate) {
+            updatedSubject.practiceDate = update.practiceDate
+            subjectChanged = true
+          }
+
+          if (subjectChanged) {
+            didChange = true
+            return updatedSubject
+          }
+
+          return subject
+        })
+
+        if (didChange) {
+          shouldPersist = true
+          subjectSchedulesRef.current = next
+          return next
+        }
+
+        return prev
+      })
+
+      if (shouldPersist) {
+        persistSubjectScheduleUpdates(rolledUpdates)
+      }
+    }
+  }, [persistSubjectScheduleUpdates])
 
   useEffect(() => {
     subjectSchedulesRef.current = subjectSchedules
