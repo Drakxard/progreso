@@ -863,15 +863,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     if (currentTable.title === "Importantes" && updatedTask) {
       try {
-        const payload: any = {
-          id: Number(updatedTask.id),
-          text: updatedTask.text,
-          numerator: updatedTask.numerator,
-          denominator: updatedTask.denominator,
-        }
-        if (typeof updatedTask.days === "number") {
-          payload.days_remaining = updatedTask.days
-        }
+        // Al guardar texto, enviamos solo los campos necesarios para evitar conflictos
+        const payload: any = { id: Number(updatedTask.id), text: updatedTask.text }
         const res = await fetch("/api/important", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -1087,6 +1080,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       calendarSelection.tableIndex,
       { eventDate: normalizedSelected },
     )
+    showToast("Guardado")
     setCalendarSelection(null)
     setIsCalendarMode(false)
   }
