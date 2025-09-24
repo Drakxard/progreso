@@ -41,6 +41,68 @@ const FIXED_SCHEDULE = {
   },
 }
 
+const SPANISH_MONTHS: Record<string, number> = {
+  enero: 0,
+  febrero: 1,
+  marzo: 2,
+  abril: 3,
+  mayo: 4,
+  junio: 5,
+  julio: 6,
+  agosto: 7,
+  septiembre: 8,
+  octubre: 9,
+  noviembre: 10,
+  diciembre: 11,
+}
+
+const toIsoDateForDatabase = (value?: string | null): string | null => {
+  if (!value) return null
+
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+    return trimmed.slice(0, 10)
+  }
+
+  const countdownMatch = trimmed.match(/^(\d+)d$/i)
+  if (countdownMatch) {
+    const days = Number.parseInt(countdownMatch[1], 10)
+    if (!Number.isNaN(days)) {
+      const date = new Date()
+      date.setHours(0, 0, 0, 0)
+      date.setDate(date.getDate() + days)
+      return date.toISOString().slice(0, 10)
+    }
+  }
+
+  const spanishMatch = trimmed.match(
+    /^([A-Za-zÁÉÍÓÚáéíóúñÑ]+)\s+(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóúñÑ]+)/,
+  )
+  if (spanishMatch) {
+    const day = Number.parseInt(spanishMatch[2], 10)
+    const monthKey = spanishMatch[3].toLowerCase()
+    const monthIndex = SPANISH_MONTHS[monthKey]
+    if (!Number.isNaN(day) && monthIndex !== undefined) {
+      const today = new Date()
+      const candidate = new Date(today.getFullYear(), monthIndex, day)
+      return candidate.toISOString().slice(0, 10)
+    }
+  }
+
+  const parsed = new Date(trimmed)
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10)
+  }
+
+  return null
+}
+
 export default function PDFManager() {
   const [showConfigForm, setShowConfigForm] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
@@ -101,6 +163,8 @@ export default function PDFManager() {
   const saveDataToDatabase = async (updatedCategories: CategoryData[]) => {
     try {
       for (const category of updatedCategories) {
+        const theoryDate = toIsoDateForDatabase(category.theoryDate)
+        const practiceDate = toIsoDateForDatabase(category.practiceDate)
         await fetch("/api/subjects", {
           method: "PUT",
           headers: {
@@ -109,8 +173,8 @@ export default function PDFManager() {
           body: JSON.stringify({
             name: category.name,
             pdf_count: category.count,
-            theory_date: category.theoryDate || null,
-            practice_date: category.practiceDate || null,
+            theory_date: theoryDate,
+            practice_date: practiceDate,
           }),
         })
       }
