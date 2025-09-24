@@ -28,3 +28,10 @@ Continue building your app on:
 2. Deploy your chats from the v0 interface
 3. Changes are automatically pushed to this repository
 4. Vercel deploys the latest version from this repository
+
+## Local setup
+
+- Create a `.env.local` from `.env.local.example` and set `DATABASE_URL` to a valid Postgres connection (Neon or local Postgres).
+- Start the dev server with `pnpm dev` or `npm run dev`.
+- On first run, the app will automatically create the tables `subjects`, `progress` y `important_tasks` y sembrar valores por defecto si faltan.
+- If you see errors like `DATABASE_URL no está configurada`, verify your `.env.local` and restart dev server.

@@ -1,8 +1,22 @@
 import { neon } from "@neondatabase/serverless"
 
-const sql = neon(process.env.DATABASE_URL!)
+// Lazily initialize the SQL client so we can give a clearer error
+// when DATABASE_URL is missing in local/dev environments.
+let _sql: ReturnType<typeof neon> | null = null
+function getSql() {
+  const url = process.env.DATABASE_URL
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL no está configurada. Define DATABASE_URL en .env.local o variables de entorno.",
+    )
+  }
+  if (_sql) return _sql
+  _sql = neon(url)
+  return _sql
+}
 
 async function ensureImportantTasksTable() {
+  const sql = getSql()
   await sql`
     CREATE TABLE IF NOT EXISTS important_tasks (
       id SERIAL PRIMARY KEY,
@@ -16,9 +30,69 @@ async function ensureImportantTasksTable() {
   `
 }
 
+async function ensureSubjectsAndProgressTables() {
+  const sql = getSql()
+  // subjects base
+  await sql`
+    CREATE TABLE IF NOT EXISTS subjects (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(50) NOT NULL UNIQUE,
+      pdf_count INTEGER DEFAULT 0,
+      theory_date DATE,
+      practice_date DATE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `
+
+  // Useful index for lookups
+  await sql`CREATE INDEX IF NOT EXISTS idx_subjects_name ON subjects(name)`
+
+  // progress per subject and table type
+  await sql`
+    CREATE TABLE IF NOT EXISTS progress (
+      id SERIAL PRIMARY KEY,
+      subject_name VARCHAR(50) NOT NULL,
+      table_type VARCHAR(20) NOT NULL CHECK (table_type IN ('theory', 'practice')),
+      current_progress INTEGER DEFAULT 0,
+      total_pdfs INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (subject_name) REFERENCES subjects(name) ON DELETE CASCADE
+    )
+  `
+
+  // Ensure unique pair (subject_name, table_type) to avoid duplicates
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_progress_unique ON progress(subject_name, table_type)`
+
+  // Seed default subjects only if missing
+  await sql`
+    INSERT INTO subjects (name, pdf_count)
+    VALUES ('�?lgebra', 0), ('Cǭlculo', 0), ('Poo', 0)
+    ON CONFLICT (name) DO NOTHING
+  `
+
+  // Seed progress rows only when not present for a given subject/table_type
+  // (idempotent, avoids duplicates)
+  await sql`
+    INSERT INTO progress (subject_name, table_type, current_progress, total_pdfs)
+    SELECT s.name, 'theory', 0, 0 FROM subjects s
+    WHERE NOT EXISTS (
+      SELECT 1 FROM progress p WHERE p.subject_name = s.name AND p.table_type = 'theory'
+    )
+  `
+  await sql`
+    INSERT INTO progress (subject_name, table_type, current_progress, total_pdfs)
+    SELECT s.name, 'practice', 0, 0 FROM subjects s
+    WHERE NOT EXISTS (
+      SELECT 1 FROM progress p WHERE p.subject_name = s.name AND p.table_type = 'practice'
+    )
+  `
+}
+
 // Ensure the important_tasks table exists as soon as the module is loaded
-ensureImportantTasksTable().catch((err) =>
-  console.error("Failed to ensure important_tasks table:", err),
+Promise.all([ensureImportantTasksTable(), ensureSubjectsAndProgressTables()]).catch(
+  (err) => console.error("Error inicializando tablas:", err),
 )
 
 export interface Subject {
@@ -65,6 +139,7 @@ function rollWeeklyForward(date: Date, today: Date) {
 }
 
 export async function getSubjects(): Promise<Subject[]> {
+  const sql = getSql()
   const result = (await sql`SELECT * FROM subjects ORDER BY name`) as Subject[]
 
   // Ensure dates are always in the future on read so the client starts correct
@@ -113,6 +188,7 @@ export async function getSubjects(): Promise<Subject[]> {
 }
 
 export async function updateSubject(name: string, data: Partial<Subject>) {
+  const sql = getSql()
   const updates = []
   const values = []
   let paramIndex = 1
@@ -141,6 +217,7 @@ export async function updateSubject(name: string, data: Partial<Subject>) {
 }
 
 export async function getProgress(): Promise<Progress[]> {
+  const sql = getSql()
   const result = await sql`SELECT * FROM progress ORDER BY subject_name, table_type`
   return result as Progress[]
 }
@@ -151,6 +228,7 @@ export async function updateProgress(
   currentProgress: number,
   totalPdfs: number,
 ) {
+  const sql = getSql()
   await sql`
     UPDATE progress
     SET current_progress = ${currentProgress},
@@ -161,6 +239,7 @@ export async function updateProgress(
 }
 
 export async function getImportantTasks(): Promise<ImportantTask[]> {
+  const sql = getSql()
   await ensureImportantTasksTable()
   const tasks = await sql<ImportantTask[]>`SELECT * FROM important_tasks ORDER BY id`
   const today = new Date()
@@ -199,6 +278,7 @@ export async function getImportantTasks(): Promise<ImportantTask[]> {
 export async function createImportantTask(
   data: Partial<ImportantTask>,
 ): Promise<ImportantTask> {
+  const sql = getSql()
   await ensureImportantTasksTable()
   const result = await sql<ImportantTask[]>`
     INSERT INTO important_tasks (text, numerator, denominator, days_remaining)
@@ -217,6 +297,7 @@ export async function updateImportantTask(
   id: number,
   data: Partial<ImportantTask>,
 ): Promise<ImportantTask | null> {
+  const sql = getSql()
   await ensureImportantTasksTable()
   const updates = []
   const values: any[] = []
@@ -251,6 +332,7 @@ export async function updateImportantTask(
 }
 
 export async function deleteImportantTask(id: number): Promise<void> {
+  const sql = getSql()
   await ensureImportantTasksTable()
   await sql`DELETE FROM important_tasks WHERE id = ${id}`
 }
