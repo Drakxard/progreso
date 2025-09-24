@@ -16,6 +16,16 @@ interface CategoryData {
   practiceDate?: string
 }
 
+// Normaliza el nombre de la materia a una clave estable
+function canonicalSubject(name: string): "algebra" | "calculo" | "poo" | string {
+  const s = (name || "").toLowerCase()
+  const noAccent = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  if (noAccent.includes("poo")) return "poo"
+  if (noAccent.includes("alge") || noAccent.endsWith("lgebra") || s.includes("lg")) return "algebra"
+  if (noAccent.includes("calcu") || noAccent.endsWith("lculo") || noAccent.includes("culo")) return "calculo"
+  return s
+}
+
 const FIXED_SCHEDULE = {
   Álgebra: {
     theory: 4, // Jueves
@@ -65,10 +75,13 @@ export default function PDFManager() {
         ]
 
         subjects.forEach((subject: any) => {
-          const categoryIndex = loadedCategories.findIndex((cat) => cat.name === subject.name)
+          const categoryIndex = loadedCategories.findIndex(
+            (cat) => canonicalSubject(cat.name) === canonicalSubject(subject.name),
+          )
           if (categoryIndex !== -1) {
+            const existing = loadedCategories[categoryIndex]
             loadedCategories[categoryIndex] = {
-              name: subject.name as Category,
+              name: existing.name,
               count: subject.pdf_count,
               theoryDate: subject.theory_date || undefined,
               practiceDate: subject.practice_date || undefined,

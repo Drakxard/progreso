@@ -15,6 +15,24 @@ function getSql() {
   return _sql
 }
 
+// Intenta mapear cualquier variante (con o sin acentos o con caracteres corruptos)
+// a los nombres canónicos usados en la BD y UI.
+function canonicalSubjectName(raw: string): string {
+  const s = (raw || "").toLowerCase()
+  // Quitar diacríticos estándar (no arregla caracteres ya corruptos, pero ayuda)
+  const noAccent = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+
+  // Heurísticas tolerantes a texto mal codificado
+  if (noAccent.includes("poo")) return "Poo"
+  if (noAccent.includes("alge") || noAccent.endsWith("lgebra") || s.includes("lg")) {
+    return "Álgebra"
+  }
+  if (noAccent.includes("calcu") || noAccent.endsWith("lculo") || noAccent.includes("culo")) {
+    return "Cálculo"
+  }
+  return raw
+}
+
 async function ensureImportantTasksTable() {
   const sql = getSql()
   await sql`
@@ -189,31 +207,23 @@ export async function getSubjects(): Promise<Subject[]> {
 
 export async function updateSubject(name: string, data: Partial<Subject>) {
   const sql = getSql()
-  const updates = []
-  const values = []
-  let paramIndex = 1
+  const canonical = canonicalSubjectName(name)
 
-  if (data.pdf_count !== undefined) {
-    updates.push(`pdf_count = $${paramIndex++}`)
-    values.push(data.pdf_count)
-  }
-  if (data.theory_date !== undefined) {
-    updates.push(`theory_date = $${paramIndex++}`)
-    values.push(data.theory_date)
-  }
-  if (data.practice_date !== undefined) {
-    updates.push(`practice_date = $${paramIndex++}`)
-    values.push(data.practice_date)
-  }
-
-  if (updates.length === 0) return
-
-  updates.push(`updated_at = CURRENT_TIMESTAMP`)
-
-  const query = `UPDATE subjects SET ${updates.join(", ")} WHERE name = $${paramIndex}`
-  values.push(name)
-  // Use unsafe to execute dynamic query text with placeholders
-  await sql.unsafe(query, values)
+  // UPSERT: inserta si no existe y actualiza sólo los campos provistos
+  await sql`
+    INSERT INTO subjects (name, pdf_count, theory_date, practice_date)
+    VALUES (
+      ${canonical},
+      ${data.pdf_count ?? null},
+      ${data.theory_date ?? null},
+      ${data.practice_date ?? null}
+    )
+    ON CONFLICT (name) DO UPDATE SET
+      pdf_count = COALESCE(EXCLUDED.pdf_count, subjects.pdf_count),
+      theory_date = COALESCE(EXCLUDED.theory_date, subjects.theory_date),
+      practice_date = COALESCE(EXCLUDED.practice_date, subjects.practice_date),
+      updated_at = CURRENT_TIMESTAMP
+  `
 }
 
 export async function getProgress(): Promise<Progress[]> {
