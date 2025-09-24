@@ -212,8 +212,8 @@ export async function updateSubject(name: string, data: Partial<Subject>) {
 
   const query = `UPDATE subjects SET ${updates.join(", ")} WHERE name = $${paramIndex}`
   values.push(name)
-
-  await sql(query, values)
+  // Use unsafe to execute dynamic query text with placeholders
+  await sql.unsafe(query, values)
 }
 
 export async function getProgress(): Promise<Progress[]> {
@@ -326,8 +326,8 @@ export async function updateImportantTask(
 
   const query = `UPDATE important_tasks SET ${updates.join(", ")} WHERE id = $${paramIndex} RETURNING *`
   values.push(id)
-
-  const result = await sql<ImportantTask[]>(query, values)
+  // Use unsafe to execute dynamic query text with placeholders
+  const result = await sql.unsafe<ImportantTask[]>(query, values)
   return result[0] ?? null
 }
 
