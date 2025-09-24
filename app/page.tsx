@@ -41,6 +41,31 @@ const FIXED_SCHEDULE = {
   },
 }
 
+const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/
+
+const toISODateString = (date: Date) => date.toISOString().slice(0, 10)
+
+const normalizeDateForStorage = (value?: string) => {
+  if (!value) return null
+  if (ISO_DATE_REGEX.test(value)) return value
+  if (/^\d+d$/.test(value)) {
+    const days = Number.parseInt(value.slice(0, -1), 10)
+    if (!Number.isNaN(days)) {
+      const base = new Date()
+      base.setHours(0, 0, 0, 0)
+      base.setDate(base.getDate() + days)
+      return toISODateString(base)
+    }
+  }
+
+  const parsed = new Date(value)
+  if (!Number.isNaN(parsed.getTime())) {
+    return toISODateString(parsed)
+  }
+
+  return null
+}
+
 export default function PDFManager() {
   const [showConfigForm, setShowConfigForm] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
@@ -101,6 +126,8 @@ export default function PDFManager() {
   const saveDataToDatabase = async (updatedCategories: CategoryData[]) => {
     try {
       for (const category of updatedCategories) {
+        const theoryDate = normalizeDateForStorage(category.theoryDate)
+        const practiceDate = normalizeDateForStorage(category.practiceDate)
         await fetch("/api/subjects", {
           method: "PUT",
           headers: {
@@ -109,8 +136,8 @@ export default function PDFManager() {
           body: JSON.stringify({
             name: category.name,
             pdf_count: category.count,
-            theory_date: category.theoryDate || null,
-            practice_date: category.practiceDate || null,
+            theory_date: theoryDate,
+            practice_date: practiceDate,
           }),
         })
       }
@@ -132,19 +159,43 @@ export default function PDFManager() {
   }
 
   const generateFixedDates = () => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    let changed = false
+
     const updatedCategories = categories.map((category) => {
       const schedule = FIXED_SCHEDULE[category.name as keyof typeof FIXED_SCHEDULE]
-      const theoryDays = calculateDaysRemaining(schedule.theory)
-      const practiceDays = calculateDaysRemaining(schedule.practice)
+      const updates: Partial<CategoryData> = {}
 
-      return {
-        ...category,
-        theoryDate: `${theoryDays}d`,
-        practiceDate: `${practiceDays}d`,
+      if (schedule) {
+        if (!category.theoryDate) {
+          const theoryTarget = new Date(today)
+          theoryTarget.setDate(
+            theoryTarget.getDate() + calculateDaysRemaining(schedule.theory),
+          )
+          updates.theoryDate = toISODateString(theoryTarget)
+        }
+        if (!category.practiceDate) {
+          const practiceTarget = new Date(today)
+          practiceTarget.setDate(
+            practiceTarget.getDate() + calculateDaysRemaining(schedule.practice),
+          )
+          updates.practiceDate = toISODateString(practiceTarget)
+        }
       }
+
+      if (Object.keys(updates).length > 0) {
+        changed = true
+        return { ...category, ...updates }
+      }
+
+      return category
     })
 
-    setCategories(updatedCategories)
+    if (changed) {
+      setCategories(updatedCategories)
+    }
   }
 
   useEffect(() => {
@@ -196,6 +247,16 @@ export default function PDFManager() {
     return `${dayName} ${dayNumber} de ${month}`
   }
 
+  const formatDateForDisplay = (value?: string) => {
+    if (!value) return undefined
+    if (ISO_DATE_REGEX.test(value)) {
+      const [year, month, day] = value.split("-").map(Number)
+      const displayDate = new Date(year, (month ?? 1) - 1, day)
+      return formatDate(displayDate)
+    }
+    return value
+  }
+
   const generateCalendarDays = () => {
     const today = new Date()
     const currentMonth = today.getMonth()
@@ -221,6 +282,7 @@ export default function PDFManager() {
   const handleDateSelect = (day: number) => {
     const today = new Date()
     const selectedDateObj = new Date(today.getFullYear(), today.getMonth(), day)
+    const isoDate = toISODateString(selectedDateObj)
     const formattedDate = formatDate(selectedDateObj)
     setSelectedDate(formattedDate)
 
@@ -228,7 +290,9 @@ export default function PDFManager() {
       cat.name === subjects[currentStep]
         ? {
             ...cat,
-            ...(currentTable === "Teoría" ? { theoryDate: formattedDate } : { practiceDate: formattedDate }),
+            ...(currentTable === "Teoría"
+              ? { theoryDate: isoDate }
+              : { practiceDate: isoDate }),
           }
         : cat,
     )
@@ -439,8 +503,16 @@ export default function PDFManager() {
                         <div className="text-gray-600">
                           {category.count} pdf{category.count !== 1 ? "s" : ""}
                         </div>
-                        {category.theoryDate && <div className="text-blue-600">T: {category.theoryDate}</div>}
-                        {category.practiceDate && <div className="text-green-600">P: {category.practiceDate}</div>}
+                        {category.theoryDate && (
+                          <div className="text-blue-600">
+                            T: {formatDateForDisplay(category.theoryDate)}
+                          </div>
+                        )}
+                        {category.practiceDate && (
+                          <div className="text-green-600">
+                            P: {formatDateForDisplay(category.practiceDate)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
