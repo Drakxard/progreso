@@ -33,6 +33,38 @@ function canonicalSubjectName(raw: string): string {
   return raw
 }
 
+function removeDiacritics(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+}
+
+function subjectNameVariants(raw: string): string[] {
+  const canonical = canonicalSubjectName(raw)
+  const variants = new Set<string>()
+
+  const candidates = [raw, canonical, removeDiacritics(raw), removeDiacritics(canonical)]
+
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    variants.add(candidate)
+    variants.add(candidate.toLowerCase())
+    variants.add(candidate.toUpperCase())
+    const capitalized = candidate.charAt(0).toUpperCase() + candidate.slice(1).toLowerCase()
+    variants.add(capitalized)
+  }
+
+  if (canonical === "Álgebra") {
+    variants.add("�?lgebra")
+    variants.add("Algebra")
+  } else if (canonical === "Cálculo") {
+    variants.add("Cǭlculo")
+    variants.add("Calculo")
+  } else if (canonical === "Poo") {
+    variants.add("POO")
+  }
+
+  return Array.from(variants).filter((name) => name.trim().length > 0)
+}
+
 async function ensureImportantTasksTable() {
   const sql = getSql()
   await sql`
@@ -86,7 +118,7 @@ async function ensureSubjectsAndProgressTables() {
   // Seed default subjects only if missing
   await sql`
     INSERT INTO subjects (name, pdf_count)
-    VALUES ('�?lgebra', 0), ('Cǭlculo', 0), ('Poo', 0)
+    VALUES ('Álgebra', 0), ('Cálculo', 0), ('Poo', 0)
     ON CONFLICT (name) DO NOTHING
   `
 
@@ -158,7 +190,34 @@ function rollWeeklyForward(date: Date, today: Date) {
 
 export async function getSubjects(): Promise<Subject[]> {
   const sql = getSql()
-  const result = (await sql`SELECT * FROM subjects ORDER BY name`) as Subject[]
+  const rows = (await sql`
+    SELECT *
+    FROM subjects
+    ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+  `) as Subject[]
+
+  const deduped = new Map<string, Subject>()
+  for (const row of rows) {
+    const canonical = canonicalSubjectName(row.name)
+    const existing = deduped.get(canonical)
+    if (!existing) {
+      deduped.set(canonical, { ...row, name: canonical })
+      continue
+    }
+
+    deduped.set(canonical, {
+      ...existing,
+      pdf_count: existing.pdf_count ?? row.pdf_count ?? 0,
+      theory_date: existing.theory_date ?? row.theory_date,
+      practice_date: existing.practice_date ?? row.practice_date,
+      created_at: existing.created_at ?? row.created_at,
+      updated_at: existing.updated_at ?? row.updated_at,
+    })
+  }
+
+  const result = Array.from(deduped.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, "es", { sensitivity: "base" }),
+  )
 
   // Ensure dates are always in the future on read so the client starts correct
   const today = new Date()
@@ -208,28 +267,100 @@ export async function getSubjects(): Promise<Subject[]> {
 export async function updateSubject(name: string, data: Partial<Subject>) {
   const sql = getSql()
   const canonical = canonicalSubjectName(name)
+  const variantList = (() => {
+    const variants = subjectNameVariants(name)
+    if (!variants.includes(canonical)) {
+      variants.push(canonical)
+    }
+    const filtered = variants.filter((value) => value.trim().length > 0)
+    return Array.from(new Set(filtered))
+  })()
 
-  // UPSERT: inserta si no existe y actualiza sólo los campos provistos
-  await sql`
-    INSERT INTO subjects (name, pdf_count, theory_date, practice_date)
-    VALUES (
-      ${canonical},
-      ${data.pdf_count ?? null},
-      ${data.theory_date ?? null},
-      ${data.practice_date ?? null}
-    )
-    ON CONFLICT (name) DO UPDATE SET
-      pdf_count = COALESCE(EXCLUDED.pdf_count, subjects.pdf_count),
-      theory_date = COALESCE(EXCLUDED.theory_date, subjects.theory_date),
-      practice_date = COALESCE(EXCLUDED.practice_date, subjects.practice_date),
-      updated_at = CURRENT_TIMESTAMP
-  `
+  const values = [
+    ...variantList,
+    data.pdf_count ?? null,
+    data.theory_date ?? null,
+    data.practice_date ?? null,
+  ]
+
+  let affectedNames: string[] = []
+
+  if (variantList.length > 0) {
+    const updateConditions = variantList.map((_, index) => `name = $${index + 1}`).join(" OR ")
+    const updateQuery = `
+      UPDATE subjects
+      SET
+        pdf_count = COALESCE($${variantList.length + 1}, subjects.pdf_count),
+        theory_date = COALESCE($${variantList.length + 2}, subjects.theory_date),
+        practice_date = COALESCE($${variantList.length + 3}, subjects.practice_date),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE ${updateConditions}
+      RETURNING name
+    `
+    const updated = await sql.unsafe<Subject[]>(updateQuery, values)
+    affectedNames = updated.map((row) => row.name)
+  }
+
+  if (affectedNames.length === 0) {
+    const inserted = await sql<Subject[]>`
+      INSERT INTO subjects (name, pdf_count, theory_date, practice_date)
+      VALUES (
+        ${canonical},
+        ${data.pdf_count ?? 0},
+        ${data.theory_date ?? null},
+        ${data.practice_date ?? null}
+      )
+      ON CONFLICT (name) DO UPDATE SET
+        pdf_count = COALESCE(EXCLUDED.pdf_count, subjects.pdf_count),
+        theory_date = COALESCE(EXCLUDED.theory_date, subjects.theory_date),
+        practice_date = COALESCE(EXCLUDED.practice_date, subjects.practice_date),
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING name
+    `
+    affectedNames = inserted.map((row) => row.name)
+  }
+
+  const ensureProgressPromises = Array.from(new Set(affectedNames)).map(async (subjectName) => {
+    await sql`
+      INSERT INTO progress (subject_name, table_type, current_progress, total_pdfs)
+      VALUES (${subjectName}, 'theory', 0, 0)
+      ON CONFLICT (subject_name, table_type) DO NOTHING
+    `
+    await sql`
+      INSERT INTO progress (subject_name, table_type, current_progress, total_pdfs)
+      VALUES (${subjectName}, 'practice', 0, 0)
+      ON CONFLICT (subject_name, table_type) DO NOTHING
+    `
+  })
+
+  if (ensureProgressPromises.length) {
+    await Promise.all(ensureProgressPromises)
+  }
 }
 
 export async function getProgress(): Promise<Progress[]> {
   const sql = getSql()
-  const result = await sql`SELECT * FROM progress ORDER BY subject_name, table_type`
-  return result as Progress[]
+  const rows = (await sql`
+    SELECT *
+    FROM progress
+    ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+  `) as Progress[]
+
+  const deduped = new Map<string, Progress>()
+  for (const row of rows) {
+    const canonical = canonicalSubjectName(row.subject_name)
+    const key = `${canonical}-${row.table_type}`
+    if (!deduped.has(key)) {
+      deduped.set(key, { ...row, subject_name: canonical })
+    }
+  }
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    if (a.subject_name === b.subject_name) {
+      return a.table_type.localeCompare(b.table_type)
+    }
+    return a.subject_name.localeCompare(b.subject_name, "es", { sensitivity: "base" })
+  })
 }
 
 export async function updateProgress(
@@ -239,13 +370,58 @@ export async function updateProgress(
   totalPdfs: number,
 ) {
   const sql = getSql()
-  await sql`
-    UPDATE progress
-    SET current_progress = ${currentProgress},
-        total_pdfs = ${totalPdfs},
+  const canonical = canonicalSubjectName(subjectName)
+  const variantList = (() => {
+    const variants = subjectNameVariants(subjectName)
+    if (!variants.includes(canonical)) {
+      variants.push(canonical)
+    }
+    const filtered = variants.filter((value) => value.trim().length > 0)
+    return Array.from(new Set(filtered))
+  })()
+
+  let updated: Progress[] = []
+
+  if (variantList.length > 0) {
+    const updateConditions = variantList.map((_, index) => `subject_name = $${index + 1}`).join(" OR ")
+    const updateQuery = `
+      UPDATE progress
+      SET current_progress = $${variantList.length + 1},
+          total_pdfs = $${variantList.length + 2},
+          updated_at = CURRENT_TIMESTAMP
+      WHERE (${updateConditions}) AND table_type = $${variantList.length + 3}
+      RETURNING subject_name
+    `
+    const values = [...variantList, currentProgress, totalPdfs, tableType]
+    updated = await sql.unsafe<Progress[]>(updateQuery, values)
+  }
+
+  if (updated.length === 0) {
+    const lookupVariants = variantList.length > 0 ? variantList : [canonical]
+    const lookupConditions = lookupVariants.map((_, index) => `name = $${index + 1}`).join(" OR ")
+    const lookupQuery = `
+      SELECT name FROM subjects
+      WHERE ${lookupConditions}
+      LIMIT 1
+    `
+    const subjectMatch = await sql.unsafe<{ name: string }[]>(lookupQuery, lookupVariants)
+    const targetName = subjectMatch[0]?.name ?? canonical
+
+    await sql`
+      INSERT INTO subjects (name, pdf_count)
+      VALUES (${targetName}, 0)
+      ON CONFLICT (name) DO NOTHING
+    `
+
+    await sql`
+      INSERT INTO progress (subject_name, table_type, current_progress, total_pdfs)
+      VALUES (${targetName}, ${tableType}, ${currentProgress}, ${totalPdfs})
+      ON CONFLICT (subject_name, table_type) DO UPDATE SET
+        current_progress = EXCLUDED.current_progress,
+        total_pdfs = EXCLUDED.total_pdfs,
         updated_at = CURRENT_TIMESTAMP
-    WHERE subject_name = ${subjectName} AND table_type = ${tableType}
-  `
+    `
+  }
 }
 
 export async function getImportantTasks(): Promise<ImportantTask[]> {
