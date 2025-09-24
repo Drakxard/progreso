@@ -41,6 +41,85 @@ const FIXED_SCHEDULE = {
   },
 }
 
+const DAY_NAMES = [
+  "Domingo",
+  "Lunes",
+  "Martes",
+  "Miércoles",
+  "Jueves",
+  "Viernes",
+  "Sábado",
+]
+
+const MONTH_NAMES = [
+  "Enero",
+  "Febrero",
+  "Marzo",
+  "Abril",
+  "Mayo",
+  "Junio",
+  "Julio",
+  "Agosto",
+  "Septiembre",
+  "Octubre",
+  "Noviembre",
+  "Diciembre",
+]
+
+const formatSpanishDate = (date: Date) => {
+  const dayName = DAY_NAMES[date.getDay()]
+  const dayNumber = date.getDate()
+  const month = MONTH_NAMES[date.getMonth()]
+  return `${dayName} ${dayNumber} de ${month}`
+}
+
+const formatDateForStorage = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+const normalizeDate = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+
+const formatDateLabel = (value?: string) => {
+  if (!value) return undefined
+
+  const isoMatch = value.match(/^(\d{4}-\d{2}-\d{2})(?:T.*)?$/)
+  if (isoMatch) {
+    const [year, month, day] = isoMatch[1].split("-").map(Number)
+    const date = new Date(year, month - 1, day)
+    const today = normalizeDate(new Date())
+    const diffMs = normalizeDate(date).getTime() - today.getTime()
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24))
+
+    if (diffDays >= 0 && diffDays <= 7) {
+      return `${diffDays}d`
+    }
+
+    return formatSpanishDate(date)
+  }
+
+  return value
+}
+
+const prepareDateForSaving = (value?: string) => {
+  if (!value) return null
+  const isoMatch = value.match(/^(\d{4}-\d{2}-\d{2})(?:T.*)?$/)
+  if (isoMatch) {
+    return isoMatch[1]
+  }
+  if (/^\d+d$/.test(value)) {
+    const days = Number.parseInt(value.slice(0, -1), 10)
+    if (!Number.isNaN(days)) {
+      const date = new Date()
+      date.setDate(date.getDate() + days)
+      return formatDateForStorage(date)
+    }
+  }
+  return null
+}
+
 export default function PDFManager() {
   const [showConfigForm, setShowConfigForm] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
@@ -101,7 +180,7 @@ export default function PDFManager() {
   const saveDataToDatabase = async (updatedCategories: CategoryData[]) => {
     try {
       for (const category of updatedCategories) {
-        await fetch("/api/subjects", {
+        const response = await fetch("/api/subjects", {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
@@ -109,10 +188,13 @@ export default function PDFManager() {
           body: JSON.stringify({
             name: category.name,
             pdf_count: category.count,
-            theory_date: category.theoryDate || null,
-            practice_date: category.practiceDate || null,
+            theory_date: prepareDateForSaving(category.theoryDate),
+            practice_date: prepareDateForSaving(category.practiceDate),
           }),
         })
+        if (!response.ok) {
+          throw new Error(`Failed to save subject ${category.name}`)
+        }
       }
     } catch (error) {
       console.error("Error saving data:", error)
@@ -132,19 +214,38 @@ export default function PDFManager() {
   }
 
   const generateFixedDates = () => {
-    const updatedCategories = categories.map((category) => {
-      const schedule = FIXED_SCHEDULE[category.name as keyof typeof FIXED_SCHEDULE]
-      const theoryDays = calculateDaysRemaining(schedule.theory)
-      const practiceDays = calculateDaysRemaining(schedule.practice)
+    setCategories((prevCategories) => {
+      const today = new Date()
+      const todayNormalized = normalizeDate(today)
 
-      return {
-        ...category,
-        theoryDate: `${theoryDays}d`,
-        practiceDate: `${practiceDays}d`,
-      }
+      return prevCategories.map((category) => {
+        const schedule = FIXED_SCHEDULE[category.name as keyof typeof FIXED_SCHEDULE]
+        if (!schedule) return category
+        const ensureFutureDate = (existing: string | undefined, daysUntil: number) => {
+          const baseDate = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+          baseDate.setDate(baseDate.getDate() + daysUntil)
+
+          if (existing && /^\d{4}-\d{2}-\d{2}$/.test(existing)) {
+            const [year, month, day] = existing.split("-").map(Number)
+            const existingDate = new Date(year, month - 1, day)
+            if (normalizeDate(existingDate) > todayNormalized) {
+              return existing
+            }
+          }
+
+          return formatDateForStorage(baseDate)
+        }
+
+        const theoryDays = calculateDaysRemaining(schedule.theory)
+        const practiceDays = calculateDaysRemaining(schedule.practice)
+
+        return {
+          ...category,
+          theoryDate: ensureFutureDate(category.theoryDate, theoryDays),
+          practiceDate: ensureFutureDate(category.practiceDate, practiceDays),
+        }
+      })
     })
-
-    setCategories(updatedCategories)
   }
 
   useEffect(() => {
@@ -172,29 +273,7 @@ export default function PDFManager() {
     return () => document.removeEventListener("keydown", handleKeyDown)
   }, [])
 
-  const formatDate = (date: Date) => {
-    const days = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-    const months = [
-      "Enero",
-      "Febrero",
-      "Marzo",
-      "Abril",
-      "Mayo",
-      "Junio",
-      "Julio",
-      "Agosto",
-      "Septiembre",
-      "Octubre",
-      "Noviembre",
-      "Diciembre",
-    ]
-
-    const dayName = days[date.getDay()]
-    const dayNumber = date.getDate()
-    const month = months[date.getMonth()]
-
-    return `${dayName} ${dayNumber} de ${month}`
-  }
+  const formatDate = (date: Date) => formatSpanishDate(date)
 
   const generateCalendarDays = () => {
     const today = new Date()
@@ -224,11 +303,15 @@ export default function PDFManager() {
     const formattedDate = formatDate(selectedDateObj)
     setSelectedDate(formattedDate)
 
+    const storageDate = formatDateForStorage(selectedDateObj)
+
     const updatedCategories = categories.map((cat) =>
       cat.name === subjects[currentStep]
         ? {
             ...cat,
-            ...(currentTable === "Teoría" ? { theoryDate: formattedDate } : { practiceDate: formattedDate }),
+            ...(currentTable === "Teoría"
+              ? { theoryDate: storageDate }
+              : { practiceDate: storageDate }),
           }
         : cat,
     )
@@ -429,21 +512,26 @@ export default function PDFManager() {
                 <h2 className="text-xl font-bold text-center text-gray-900">Estado Actual</h2>
 
                 <div className="space-y-3">
-                  {categories.map((category) => (
-                    <div
-                      key={category.name}
-                      className="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0"
-                    >
-                      <span className="font-medium text-gray-700">{category.name}</span>
-                      <div className="text-right text-sm">
-                        <div className="text-gray-600">
-                          {category.count} pdf{category.count !== 1 ? "s" : ""}
+                  {categories.map((category) => {
+                    const theoryLabel = formatDateLabel(category.theoryDate)
+                    const practiceLabel = formatDateLabel(category.practiceDate)
+
+                    return (
+                      <div
+                        key={category.name}
+                        className="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0"
+                      >
+                        <span className="font-medium text-gray-700">{category.name}</span>
+                        <div className="text-right text-sm">
+                          <div className="text-gray-600">
+                            {category.count} pdf{category.count !== 1 ? "s" : ""}
+                          </div>
+                          {theoryLabel && <div className="text-blue-600">T: {theoryLabel}</div>}
+                          {practiceLabel && <div className="text-green-600">P: {practiceLabel}</div>}
                         </div>
-                        {category.theoryDate && <div className="text-blue-600">T: {category.theoryDate}</div>}
-                        {category.practiceDate && <div className="text-green-600">P: {category.practiceDate}</div>}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
 
                 <Button
