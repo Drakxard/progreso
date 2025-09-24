@@ -54,7 +54,7 @@ export default function PDFManager() {
   const loadDataFromDatabase = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("/api/subjects")
+      const response = await fetch("/api/subjects", { cache: "no-store" })
       if (response.ok) {
         const subjects = await response.json()
 

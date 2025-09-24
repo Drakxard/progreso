@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { getSubjects, updateSubject } from "@/lib/database"
 
+export const dynamic = "force-dynamic"
+
 export async function GET() {
   try {
     const subjects = await getSubjects()

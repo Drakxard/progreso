@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server"
 import { getProgress, updateProgress } from "@/lib/database"
 
+export const dynamic = "force-dynamic"
+
 export async function GET() {
   try {
     const progress = await getProgress()
     const today = new Date()
+    const normalize = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    const todayMidnight = normalize(today)
 
     const updatedProgress = await Promise.all(
       progress.map(async (task) => {
         const lastUpdate = new Date(task.updated_at)
-        const diffTime = today.getTime() - lastUpdate.getTime()
-        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+        const diffTime = todayMidnight.getTime() - normalize(lastUpdate).getTime()
+        const diffDays = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)))
 
         if (diffDays > 0) {
           const newProgress = task.current_progress + diffDays

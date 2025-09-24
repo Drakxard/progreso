@@ -51,9 +51,65 @@ export interface ImportantTask {
   updated_at: string
 }
 
+function normalize(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function rollWeeklyForward(date: Date, today: Date) {
+  let d = normalize(date)
+  const t = normalize(today)
+  while (d <= t) {
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7)
+  }
+  return d
+}
+
 export async function getSubjects(): Promise<Subject[]> {
-  const result = await sql`SELECT * FROM subjects ORDER BY name`
-  return result as Subject[]
+  const result = (await sql`SELECT * FROM subjects ORDER BY name`) as Subject[]
+
+  // Ensure dates are always in the future on read so the client starts correct
+  const today = new Date()
+  const updates: Array<Promise<void>> = []
+  const rolled = result.map((s) => {
+    let theory_date = s.theory_date
+    let practice_date = s.practice_date
+
+    try {
+      if (s.theory_date) {
+        const d = new Date(s.theory_date)
+        const rolledDate = rollWeeklyForward(d, today)
+        if (normalize(d) <= normalize(today)) {
+          theory_date = rolledDate.toISOString().slice(0, 10)
+        }
+      }
+      if (s.practice_date) {
+        const d = new Date(s.practice_date)
+        const rolledDate = rollWeeklyForward(d, today)
+        if (normalize(d) <= normalize(today)) {
+          practice_date = rolledDate.toISOString().slice(0, 10)
+        }
+      }
+    } catch {
+      // If parsing fails, just keep original value
+    }
+
+    if (theory_date !== s.theory_date || practice_date !== s.practice_date) {
+      updates.push(
+        updateSubject(s.name, {
+          theory_date: theory_date ?? undefined,
+          practice_date: practice_date ?? undefined,
+        }),
+      )
+    }
+
+    return { ...s, theory_date, practice_date }
+  })
+
+  if (updates.length) {
+    await Promise.allSettled(updates)
+  }
+
+  return rolled
 }
 
 export async function updateSubject(name: string, data: Partial<Subject>) {
@@ -108,11 +164,14 @@ export async function getImportantTasks(): Promise<ImportantTask[]> {
   await ensureImportantTasksTable()
   const tasks = await sql<ImportantTask[]>`SELECT * FROM important_tasks ORDER BY id`
   const today = new Date()
+  const todayMidnight = normalize(today)
   const updatedTasks = await Promise.all(
     tasks.map(async (task) => {
       const lastUpdate = new Date(task.updated_at)
-      const diffTime = today.getTime() - lastUpdate.getTime()
-      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+      // Decrement based on calendar days (midnight boundaries), not 24h windows
+      const lastMidnight = normalize(lastUpdate)
+      const diffTime = todayMidnight.getTime() - lastMidnight.getTime()
+      const diffDays = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)))
       if (diffDays > 0) {
         const newDaysRemaining = Math.max(task.days_remaining - diffDays, 0)
         const newNumerator = Math.min(
