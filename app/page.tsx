@@ -26,6 +26,39 @@ function canonicalSubject(name: string): "algebra" | "calculo" | "poo" | string 
   return s
 }
 
+function formatIsoDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function normalizeDateForDatabase(value?: string | null) {
+  if (!value) return null
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value
+  }
+  if (/^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    return value.slice(0, 10)
+  }
+  if (/^\d+d$/.test(value)) {
+    const days = Number.parseInt(value.slice(0, -1), 10)
+    if (!Number.isNaN(days)) {
+      const future = new Date()
+      future.setHours(0, 0, 0, 0)
+      future.setDate(future.getDate() + days)
+      return formatIsoDate(future)
+    }
+  }
+
+  const parsed = new Date(value)
+  if (!Number.isNaN(parsed.getTime())) {
+    return formatIsoDate(parsed)
+  }
+
+  return null
+}
+
 const FIXED_SCHEDULE = {
   Álgebra: {
     theory: 4, // Jueves
@@ -101,6 +134,9 @@ export default function PDFManager() {
   const saveDataToDatabase = async (updatedCategories: CategoryData[]) => {
     try {
       for (const category of updatedCategories) {
+        const normalizedTheoryDate = normalizeDateForDatabase(category.theoryDate)
+        const normalizedPracticeDate = normalizeDateForDatabase(category.practiceDate)
+
         await fetch("/api/subjects", {
           method: "PUT",
           headers: {
@@ -109,8 +145,8 @@ export default function PDFManager() {
           body: JSON.stringify({
             name: category.name,
             pdf_count: category.count,
-            theory_date: category.theoryDate || null,
-            practice_date: category.practiceDate || null,
+            theory_date: normalizedTheoryDate,
+            practice_date: normalizedPracticeDate,
           }),
         })
       }
@@ -132,6 +168,9 @@ export default function PDFManager() {
   }
 
   const generateFixedDates = () => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
     const updatedCategories = categories.map((category) => {
       const schedule = FIXED_SCHEDULE[category.name as keyof typeof FIXED_SCHEDULE]
       const theoryDays = calculateDaysRemaining(schedule.theory)
@@ -139,8 +178,12 @@ export default function PDFManager() {
 
       return {
         ...category,
-        theoryDate: `${theoryDays}d`,
-        practiceDate: `${practiceDays}d`,
+        theoryDate: formatIsoDate(
+          new Date(today.getFullYear(), today.getMonth(), today.getDate() + theoryDays),
+        ),
+        practiceDate: formatIsoDate(
+          new Date(today.getFullYear(), today.getMonth(), today.getDate() + practiceDays),
+        ),
       }
     })
 
@@ -196,6 +239,45 @@ export default function PDFManager() {
     return `${dayName} ${dayNumber} de ${month}`
   }
 
+  const formatStoredDateForDisplay = (value?: string) => {
+    if (!value) return undefined
+
+    const normalize = (input: string) => {
+      const [yearStr, monthStr, dayStr] = input.split("-")
+      const year = Number.parseInt(yearStr ?? "", 10)
+      const month = Number.parseInt(monthStr ?? "1", 10)
+      const day = Number.parseInt(dayStr ?? "1", 10)
+
+      if (Number.isNaN(year)) {
+        return new Date(input)
+      }
+
+      const safeMonth = Number.isNaN(month) ? 1 : month
+      const safeDay = Number.isNaN(day) ? 1 : day
+
+      return new Date(year, safeMonth - 1, safeDay)
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return formatDate(normalize(value))
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}T/.test(value)) {
+      return formatDate(normalize(value.slice(0, 10)))
+    }
+
+    if (/^\d+d$/.test(value)) {
+      return value
+    }
+
+    const parsed = new Date(value)
+    if (!Number.isNaN(parsed.getTime())) {
+      return formatDate(parsed)
+    }
+
+    return value
+  }
+
   const generateCalendarDays = () => {
     const today = new Date()
     const currentMonth = today.getMonth()
@@ -224,11 +306,13 @@ export default function PDFManager() {
     const formattedDate = formatDate(selectedDateObj)
     setSelectedDate(formattedDate)
 
+    const isoDate = formatIsoDate(selectedDateObj)
+
     const updatedCategories = categories.map((cat) =>
       cat.name === subjects[currentStep]
         ? {
             ...cat,
-            ...(currentTable === "Teoría" ? { theoryDate: formattedDate } : { practiceDate: formattedDate }),
+            ...(currentTable === "Teoría" ? { theoryDate: isoDate } : { practiceDate: isoDate }),
           }
         : cat,
     )
@@ -435,13 +519,20 @@ export default function PDFManager() {
                       className="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0"
                     >
                       <span className="font-medium text-gray-700">{category.name}</span>
-                      <div className="text-right text-sm">
-                        <div className="text-gray-600">
-                          {category.count} pdf{category.count !== 1 ? "s" : ""}
-                        </div>
-                        {category.theoryDate && <div className="text-blue-600">T: {category.theoryDate}</div>}
-                        {category.practiceDate && <div className="text-green-600">P: {category.practiceDate}</div>}
-                      </div>
+                      {(() => {
+                        const theoryDisplay = formatStoredDateForDisplay(category.theoryDate)
+                        const practiceDisplay = formatStoredDateForDisplay(category.practiceDate)
+
+                        return (
+                          <div className="text-right text-sm">
+                            <div className="text-gray-600">
+                              {category.count} pdf{category.count !== 1 ? "s" : ""}
+                            </div>
+                            {theoryDisplay && <div className="text-blue-600">T: {theoryDisplay}</div>}
+                            {practiceDisplay && <div className="text-green-600">P: {practiceDisplay}</div>}
+                          </div>
+                        )
+                      })()}
                     </div>
                   ))}
                 </div>
