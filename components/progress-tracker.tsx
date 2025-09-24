@@ -110,6 +110,14 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [calendarSelection, setCalendarSelection] = useState<
     { taskId: string; tableIndex: number } | null
   >(null)
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(
+    null,
+  )
+
+  const showToast = (message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type })
+    window.setTimeout(() => setToast(null), 2000)
+  }
   const [subjectSchedules, setSubjectSchedules] = useState<SubjectSchedule[]>(
     () =>
       initialData.map((subject) => ({
@@ -318,9 +326,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         return prev
       })
 
-      if (shouldPersist) {
-        persistSubjectScheduleUpdates(rolledUpdates)
-      }
+    if (shouldPersist) {
+      persistSubjectScheduleUpdates(rolledUpdates)
+    }
     }
   }, [persistSubjectScheduleUpdates])
 
@@ -854,17 +862,27 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     setEditText("")
 
     if (currentTable.title === "Importantes" && updatedTask) {
-      await fetch("/api/important", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      try {
+        const payload: any = {
           id: Number(updatedTask.id),
           text: updatedTask.text,
           numerator: updatedTask.numerator,
           denominator: updatedTask.denominator,
-          days_remaining: updatedTask.days || 0,
-        }),
-      })
+        }
+        if (typeof updatedTask.days === "number") {
+          payload.days_remaining = updatedTask.days
+        }
+        const res = await fetch("/api/important", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error("Failed to save")
+        showToast("Importante guardado")
+      } catch (err) {
+        console.error("Error saving important task:", err)
+        showToast("Error al guardar", "error")
+      }
     }
   }
 
@@ -948,17 +966,24 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         denominator: newDenominator,
       }
       setTables(newTables)
-      await fetch("/api/important", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: Number(task.id),
-          text: task.text,
-          numerator: newNumerator,
-          denominator: newDenominator,
-          days_remaining: normalizedDays,
-        }),
-      })
+      try {
+        const res = await fetch("/api/important", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: Number(task.id),
+            text: task.text,
+            numerator: newNumerator,
+            denominator: newDenominator,
+            days_remaining: normalizedDays,
+          }),
+        })
+        if (!res.ok) throw new Error("Failed to save")
+        showToast("Fecha actualizada")
+      } catch (err) {
+        console.error("Error updating important task:", err)
+        showToast("Error al guardar", "error")
+      }
       return
     }
 
@@ -1602,6 +1627,15 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             <ChevronRight className="h-6 w-6" />
           </Button>
         </div>
+        {toast && (
+          <div
+            className={`fixed top-4 right-4 px-4 py-2 rounded shadow text-white transition-opacity duration-300 ${toast.type === "success" ? "bg-green-600" : "bg-red-600"}`}
+            role="status"
+            aria-live="polite"
+          >
+            {toast.message}
+          </div>
+        )}
       </div>
     </div>
   )
