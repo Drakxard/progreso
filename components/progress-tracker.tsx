@@ -77,6 +77,8 @@ interface CalendarEvent {
   label: string
   color: string
   url?: string
+  type: "theory" | "practice" | "important"
+  taskId?: string
 }
 
 interface TaskItem {
@@ -86,6 +88,7 @@ interface TaskItem {
   denominator: number
   days?: number
   topics?: string[]
+  link?: string
 }
 
 interface Table {
@@ -135,11 +138,16 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(
     null,
   )
+  const [importantLinkEditor, setImportantLinkEditor] = useState<
+    { taskId: string; value: string } | null
+  >(null)
+  const [isSavingImportantLink, setIsSavingImportantLink] = useState(false)
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
     window.setTimeout(() => setToast(null), 2000)
   }
+  
   const [subjectSchedules, setSubjectSchedules] = useState<SubjectSchedule[]>(
     () =>
       initialData.map((subject) => ({
@@ -440,6 +448,94 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     },
   ])
 
+  const importantTable = useMemo(
+    () => tables.find((table) => table.title === "Importantes") ?? null,
+    [tables],
+  )
+
+  const importantLinkEditorTask = useMemo(() => {
+    if (!importantLinkEditor || !importantTable) return null
+    return (
+      importantTable.tasks.find((task) => task.id === importantLinkEditor.taskId) ?? null
+    )
+  }, [importantLinkEditor, importantTable])
+
+  const openImportantLinkEditor = useCallback(
+    (taskId: string) => {
+      const task = importantTable?.tasks.find((item) => item.id === taskId)
+      if (!task) return
+      setImportantLinkEditor({ taskId, value: task.link ?? "" })
+    },
+    [importantTable],
+  )
+
+  const closeImportantLinkEditor = useCallback(() => {
+    if (isSavingImportantLink) return
+    setImportantLinkEditor(null)
+  }, [isSavingImportantLink])
+
+  const handleSaveImportantLink = useCallback(async () => {
+    if (!importantLinkEditor) return
+
+    const taskId = importantLinkEditor.taskId
+    const trimmed = importantLinkEditor.value.trim()
+    const normalized = trimmed === "" ? undefined : trimmed
+    const currentTask = importantTable?.tasks.find((task) => task.id === taskId)
+    if (!currentTask) {
+      setImportantLinkEditor(null)
+      return
+    }
+
+    const previousLink = currentTask.link
+    setIsSavingImportantLink(true)
+
+    setTables((prevTables) =>
+      prevTables.map((table) => {
+        if (table.title !== "Importantes") return table
+        return {
+          ...table,
+          tasks: table.tasks.map((task) =>
+            task.id === taskId ? { ...task, link: normalized } : task,
+          ),
+        }
+      }),
+    )
+
+    try {
+      const response = await fetch("/api/important", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: Number(taskId),
+          resource_url: normalized ?? null,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to save")
+      }
+
+      showToast("Link actualizado")
+      setImportantLinkEditor(null)
+    } catch (error) {
+      console.error("Error saving important link:", error)
+      setTables((prevTables) =>
+        prevTables.map((table) => {
+          if (table.title !== "Importantes") return table
+          return {
+            ...table,
+            tasks: table.tasks.map((task) =>
+              task.id === taskId ? { ...task, link: previousLink } : task,
+            ),
+          }
+        }),
+      )
+      showToast("Error al guardar", "error")
+    } finally {
+      setIsSavingImportantLink(false)
+    }
+  }, [importantLinkEditor, importantTable, showToast])
+
   const hasLoadedImportant = useRef(false)
 
   const calendarEvents = useMemo(() => {
@@ -465,6 +561,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           }`,
           color: "bg-blue-500",
           url: SUBJECT_RESOURCE_LINKS[subject.name]?.theory,
+          type: "theory",
+          taskId: tTask?.id,
         })
       }
       const practiceDate = parseDateInput(subject.practiceDate)
@@ -483,6 +581,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           }`,
           color: "bg-green-500",
           url: SUBJECT_RESOURCE_LINKS[subject.name]?.practice,
+          type: "practice",
+          taskId: pTask?.id,
         })
       }
     })
@@ -498,6 +598,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             date: due,
             label: `${task.text} (${task.days}d)` ,
             color: "bg-orange-500",
+            url: task.link,
+            type: "important",
+            taskId: task.id,
           })
         }
       })
@@ -728,6 +831,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                   numerator,
                   denominator,
                   topics: [],
+                  link: t.resource_url ?? undefined,
                 }
               }),
             }
@@ -1131,6 +1235,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             numerator,
             denominator,
             topics: [],
+            link: task.resource_url ?? undefined,
           })
         }
         return newTables
@@ -1277,6 +1382,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 className={`text-[9px] text-white px-1 rounded ${ev.color} ${
                   ev.url
                     ? "cursor-pointer underline decoration-transparent hover:decoration-inherit focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-background focus-visible:ring-white/60"
+                    : ev.type === "important"
+                      ? "cursor-pointer"
                     : ""
                 }`}
                 onClick={
@@ -1294,10 +1401,17 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                           event.preventDefault()
                           event.stopPropagation()
                           window.open(ev.url, "_blank", "noopener,noreferrer")
-                        }
                       }
-                    : undefined
+                    }
+                  : undefined
                 }
+                onContextMenu={(event) => {
+                  if (ev.type === "important" && ev.taskId) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    openImportantLinkEditor(ev.taskId)
+                  }
+                }}
                 role={ev.url ? "link" : undefined}
                 tabIndex={ev.url ? 0 : undefined}
               >
@@ -1443,6 +1557,60 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   return (
     <div className="min-h-screen bg-background p-6 relative">
+      {importantLinkEditor && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-4"
+          onClick={closeImportantLinkEditor}
+        >
+          <div
+            className="bg-card w-full max-w-md rounded-lg shadow-lg p-6 space-y-4"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <h2 className="text-lg font-semibold">Asignar link</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                {importantLinkEditorTask
+                  ? `Agrega un link para "${importantLinkEditorTask.text}".`
+                  : "Agrega un link para este evento importante."}
+              </p>
+            </div>
+            <form
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void handleSaveImportantLink()
+              }}
+            >
+              <Input
+                value={importantLinkEditor.value}
+                onChange={(event) =>
+                  setImportantLinkEditor((prev) =>
+                    prev ? { ...prev, value: event.target.value } : prev,
+                  )
+                }
+                placeholder="https://..."
+                autoFocus
+              />
+              <p className="text-xs text-muted-foreground">
+                Deja el campo vacío para eliminar el link.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={closeImportantLinkEditor}
+                  disabled={isSavingImportantLink}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={isSavingImportantLink}>
+                  {isSavingImportantLink ? "Guardando..." : "Guardar"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       <div className="fixed top-6 left-6 z-30">
         <Button
           onClick={() =>
