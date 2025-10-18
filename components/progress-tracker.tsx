@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import type { MouseEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, X } from "lucide-react"
@@ -77,6 +78,11 @@ interface CalendarEvent {
   label: string
   color: string
   url?: string
+  source?: {
+    kind: "important" | "theory" | "practice"
+    taskId?: string
+    tableIndex?: number
+  }
 }
 
 interface TaskItem {
@@ -86,7 +92,18 @@ interface TaskItem {
   denominator: number
   days?: number
   topics?: string[]
+  url?: string
 }
+
+type LinkModalState =
+  | { isOpen: false }
+  | {
+      isOpen: true
+      taskId: string
+      tableIndex: number
+      url: string
+      label: string
+    }
 
 interface Table {
   title: string
@@ -118,6 +135,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [showAverageLine, setShowAverageLine] = useState(false)
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
+  const [linkModalState, setLinkModalState] = useState<LinkModalState>({
+    isOpen: false,
+  })
   const [isLoading, setIsLoading] = useState(true)
   const [topicInputs, setTopicInputs] = useState<Record<string, string>>({})
  
@@ -139,6 +159,73 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
     window.setTimeout(() => setToast(null), 2000)
+  }
+
+  const handleCalendarEventContextMenu = (
+    event: MouseEvent<HTMLDivElement>,
+    calendarEvent: CalendarEvent,
+  ) => {
+    if (calendarEvent.source?.kind !== "important") {
+      return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    const { tableIndex, taskId } = calendarEvent.source
+    if (tableIndex === undefined || taskId === undefined) {
+      return
+    }
+    const table = tables[tableIndex]
+    const task = table?.tasks.find((item) => item.id === taskId)
+    setLinkModalState({
+      isOpen: true,
+      tableIndex,
+      taskId,
+      url: task?.url ?? "",
+      label: task?.text ?? calendarEvent.label,
+    })
+  }
+
+  const handleLinkModalClose = () => {
+    setLinkModalState({ isOpen: false })
+  }
+
+  const handleLinkModalSave = async () => {
+    if (!linkModalState.isOpen) return
+    const trimmedUrl = linkModalState.url.trim()
+    const payloadUrl = trimmedUrl === "" ? null : trimmedUrl
+    const { tableIndex, taskId } = linkModalState
+    try {
+      const response = await fetch("/api/important", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: Number(taskId),
+          url: payloadUrl,
+        }),
+      })
+      if (!response.ok) {
+        throw new Error("Failed to save link")
+      }
+      const sanitizedUrl = trimmedUrl === "" ? undefined : trimmedUrl
+      setTables((prev) =>
+        prev.map((table, index) => {
+          if (index !== tableIndex) return table
+          return {
+            ...table,
+            tasks: table.tasks.map((task) =>
+              task.id === taskId
+                ? { ...task, url: sanitizedUrl }
+                : task,
+            ),
+          }
+        }),
+      )
+      showToast("Link guardado")
+      setLinkModalState({ isOpen: false })
+    } catch (error) {
+      console.error("Error updating important task link:", error)
+      showToast("Error al guardar", "error")
+    }
   }
   const [subjectSchedules, setSubjectSchedules] = useState<SubjectSchedule[]>(
     () =>
@@ -447,6 +534,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     const teoriaTasks = tables.find((t) => t.title === "Teoría")?.tasks || []
     const practicaTasks = tables.find((t) => t.title === "Práctica")?.tasks || []
+    const importantTableIndex = tables.findIndex((t) => t.title === "Importantes")
+    const importantTasks =
+      importantTableIndex === -1 ? [] : tables[importantTableIndex].tasks
 
     subjectSchedules.forEach((subject) => {
       const theoryDate = parseDateInput(subject.theoryDate)
@@ -465,6 +555,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           }`,
           color: "bg-blue-500",
           url: SUBJECT_RESOURCE_LINKS[subject.name]?.theory,
+          source: { kind: "theory" },
         })
       }
       const practiceDate = parseDateInput(subject.practiceDate)
@@ -483,24 +574,33 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           }`,
           color: "bg-green-500",
           url: SUBJECT_RESOURCE_LINKS[subject.name]?.practice,
+          source: { kind: "practice" },
         })
       }
     })
 
     const today = new Date()
-    tables
-      .find((t) => t.title === "Importantes")
-      ?.tasks.forEach((task) => {
-        if (task.days !== undefined && task.days >= 0) {
-          const due = new Date(today)
-          due.setDate(due.getDate() + (task.days || 0))
-          events.push({
-            date: due,
-            label: `${task.text} (${task.days}d)` ,
-            color: "bg-orange-500",
-          })
-        }
-      })
+    importantTasks.forEach((task) => {
+      if (task.days !== undefined && task.days >= 0) {
+        const due = new Date(today)
+        due.setDate(due.getDate() + (task.days || 0))
+        const trimmedUrl =
+          typeof task.url === "string" && task.url.trim() !== ""
+            ? task.url
+            : undefined
+        events.push({
+          date: due,
+          label: `${task.text} (${task.days}d)`,
+          color: "bg-orange-500",
+          url: trimmedUrl,
+          source: {
+            kind: "important",
+            taskId: task.id,
+            tableIndex: importantTableIndex,
+          },
+        })
+      }
+    })
 
     return events
   }, [tables, subjectSchedules])
@@ -728,6 +828,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                   numerator,
                   denominator,
                   topics: [],
+                  url:
+                    typeof t.url === "string" && t.url.trim() !== ""
+                      ? t.url
+                      : undefined,
                 }
               }),
             }
@@ -1131,6 +1235,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             numerator,
             denominator,
             topics: [],
+            url:
+              typeof task.url === "string" && task.url.trim() !== ""
+                ? task.url
+                : undefined,
           })
         }
         return newTables
@@ -1279,6 +1387,9 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                     ? "cursor-pointer underline decoration-transparent hover:decoration-inherit focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-background focus-visible:ring-white/60"
                     : ""
                 }`}
+                onContextMenu={(event) =>
+                  handleCalendarEventContextMenu(event, ev)
+                }
                 onClick={
                   ev.url
                     ? (event) => {
@@ -1677,6 +1788,36 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             aria-live="polite"
           >
             {toast.message}
+          </div>
+        )}
+        {linkModalState.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
+              <h2 className="text-lg font-semibold">Agregar link</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {linkModalState.label}
+              </p>
+              <Input
+                value={linkModalState.url}
+                onChange={(event) => {
+                  const value = event.target.value
+                  setLinkModalState((prev) =>
+                    prev.isOpen ? { ...prev, url: value } : prev,
+                  )
+                }}
+                placeholder="https://..."
+                className="mt-4"
+                autoFocus
+              />
+              <div className="mt-6 flex justify-end gap-2">
+                <Button variant="outline" onClick={handleLinkModalClose}>
+                  Cancelar
+                </Button>
+                <Button onClick={() => void handleLinkModalSave()}>
+                  Guardar
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </div>
