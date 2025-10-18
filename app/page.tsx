@@ -41,6 +41,23 @@ const FIXED_SCHEDULE = {
   },
 }
 
+const RESOURCE_LINKS: Record<Category, Record<TableType, string>> = {
+  Álgebra: {
+    Teoría: "https://v0-pdf-navigation-app.vercel.app/teoria/algebra",
+    Práctica: "https://v0-pdf-navigation-app.vercel.app/practica/algebra",
+  },
+  Cálculo: {
+    Teoría: "https://v0-pdf-navigation-app.vercel.app/teoria/calculo",
+    Práctica: "https://v0-pdf-navigation-app.vercel.app/practica/calculo",
+  },
+  Poo: {
+    Teoría: "https://v0-pdf-navigation-app.vercel.app/teoria/poo",
+    Práctica: "https://v0-pdf-navigation-app.vercel.app/práctica/poo",
+  },
+}
+
+const SUBJECTS = ["Álgebra", "Cálculo", "Poo"] as const
+
 export default function PDFManager() {
   const [showConfigForm, setShowConfigForm] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
@@ -55,10 +72,11 @@ export default function PDFManager() {
     { name: "Poo", count: 6 },
   ])
   const [isLoading, setIsLoading] = useState(true)
+  const lastOpenedResource = useRef<string | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const subjects = ["Álgebra", "Cálculo", "Poo"] as const
+  const subjects = SUBJECTS
   const isComplete = currentStep >= subjects.length
 
   const loadDataFromDatabase = async () => {
@@ -158,6 +176,21 @@ export default function PDFManager() {
       return () => clearInterval(interval)
     }
   }, [isLoading, categories.length])
+
+  useEffect(() => {
+    if (isCalendarMode && showConfigForm && !isComplete) {
+      const subject = subjects[currentStep]
+      const link = RESOURCE_LINKS[subject]?.[currentTable]
+      const key = `${subject}-${currentTable}`
+
+      if (link && lastOpenedResource.current !== key) {
+        window.open(link, "_blank", "noopener,noreferrer")
+        lastOpenedResource.current = key
+      }
+    } else if (!isCalendarMode) {
+      lastOpenedResource.current = null
+    }
+  }, [isCalendarMode, currentTable, currentStep, isComplete, showConfigForm])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
