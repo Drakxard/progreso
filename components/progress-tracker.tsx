@@ -57,6 +57,28 @@ const rollDateForwardWeekly = (date: Date, today: Date) => {
   return nextDate
 }
 
+const SUBJECT_RESOURCE_LINKS: Record<string, { theory?: string; practice?: string }> = {
+  Álgebra: {
+    theory: "https://v0-pdf-navigation-app.vercel.app/teoria/algebra",
+    practice: "https://v0-pdf-navigation-app.vercel.app/practica/algebra",
+  },
+  Cálculo: {
+    theory: "https://v0-pdf-navigation-app.vercel.app/teoria/calculo",
+    practice: "https://v0-pdf-navigation-app.vercel.app/practica/calculo",
+  },
+  Poo: {
+    theory: "https://v0-pdf-navigation-app.vercel.app/teoria/poo",
+    practice: "https://v0-pdf-navigation-app.vercel.app/práctica/poo",
+  },
+}
+
+interface CalendarEvent {
+  date: Date
+  label: string
+  color: string
+  url?: string
+}
+
 interface TaskItem {
   id: string
   text: string
@@ -421,7 +443,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const hasLoadedImportant = useRef(false)
 
   const calendarEvents = useMemo(() => {
-    const events: { date: Date; label: string; color: string }[] = []
+    const events: CalendarEvent[] = []
 
     const teoriaTasks = tables.find((t) => t.title === "Teoría")?.tasks || []
     const practicaTasks = tables.find((t) => t.title === "Práctica")?.tasks || []
@@ -442,6 +464,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             remaining !== undefined ? ` (${remaining})` : ""
           }`,
           color: "bg-blue-500",
+          url: SUBJECT_RESOURCE_LINKS[subject.name]?.theory,
         })
       }
       const practiceDate = parseDateInput(subject.practiceDate)
@@ -459,6 +482,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             remaining !== undefined ? ` (${remaining})` : ""
           }`,
           color: "bg-green-500",
+          url: SUBJECT_RESOURCE_LINKS[subject.name]?.practice,
         })
       }
     })
@@ -1250,7 +1274,32 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             {dayEvents.map((ev, idx) => (
               <div
                 key={idx}
-                className={`text-[9px] text-white px-1 rounded ${ev.color}`}
+                className={`text-[9px] text-white px-1 rounded ${ev.color} ${
+                  ev.url
+                    ? "cursor-pointer underline decoration-transparent hover:decoration-inherit focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-background focus-visible:ring-white/60"
+                    : ""
+                }`}
+                onClick={
+                  ev.url
+                    ? (event) => {
+                        event.stopPropagation()
+                        window.open(ev.url, "_blank", "noopener,noreferrer")
+                      }
+                    : undefined
+                }
+                onKeyDown={
+                  ev.url
+                    ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          window.open(ev.url, "_blank", "noopener,noreferrer")
+                        }
+                      }
+                    : undefined
+                }
+                role={ev.url ? "link" : undefined}
+                tabIndex={ev.url ? 0 : undefined}
               >
                 {ev.label}
               </div>
