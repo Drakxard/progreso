@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { createPortal } from "react-dom"
 import type { MouseEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -155,6 +156,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(
     null,
   )
+  const [isClient, setIsClient] = useState(false)
+
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
@@ -1790,36 +1796,39 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             {toast.message}
           </div>
         )}
-        {linkModalState.isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-            <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
-              <h2 className="text-lg font-semibold">Agregar link</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {linkModalState.label}
-              </p>
-              <Input
-                value={linkModalState.url}
-                onChange={(event) => {
-                  const value = event.target.value
-                  setLinkModalState((prev) =>
-                    prev.isOpen ? { ...prev, url: value } : prev,
-                  )
-                }}
-                placeholder="https://..."
-                className="mt-4"
-                autoFocus
-              />
-              <div className="mt-6 flex justify-end gap-2">
-                <Button variant="outline" onClick={handleLinkModalClose}>
-                  Cancelar
-                </Button>
-                <Button onClick={() => void handleLinkModalSave()}>
-                  Guardar
-                </Button>
+        {isClient &&
+          linkModalState.isOpen &&
+          createPortal(
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+              <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
+                <h2 className="text-lg font-semibold">Agregar link</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {linkModalState.label}
+                </p>
+                <Input
+                  value={linkModalState.url}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setLinkModalState((prev) =>
+                      prev.isOpen ? { ...prev, url: value } : prev,
+                    )
+                  }}
+                  placeholder="https://..."
+                  className="mt-4"
+                  autoFocus
+                />
+                <div className="mt-6 flex justify-end gap-2">
+                  <Button variant="outline" onClick={handleLinkModalClose}>
+                    Cancelar
+                  </Button>
+                  <Button onClick={() => void handleLinkModalSave()}>
+                    Guardar
+                  </Button>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+            </div>,
+            document.body,
+          )}
       </div>
     </div>
   )
