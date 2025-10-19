@@ -42,10 +42,12 @@ async function ensureImportantTasksTable() {
       numerator INTEGER DEFAULT 0,
       denominator INTEGER DEFAULT 1,
       days_remaining INTEGER DEFAULT 0,
+      url TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `
+  await sql`ALTER TABLE important_tasks ADD COLUMN IF NOT EXISTS url TEXT`
 }
 
 async function ensureSubjectsAndProgressTables() {
@@ -139,6 +141,7 @@ export interface ImportantTask {
   numerator: number
   denominator: number
   days_remaining: number
+  url: string | null
   created_at: string
   updated_at: string
 }
@@ -291,12 +294,13 @@ export async function createImportantTask(
   const sql = getSql()
   await ensureImportantTasksTable()
   const result = await sql<ImportantTask[]>`
-    INSERT INTO important_tasks (text, numerator, denominator, days_remaining)
+    INSERT INTO important_tasks (text, numerator, denominator, days_remaining, url)
     VALUES (
       ${data.text ?? ""},
       ${data.numerator ?? 0},
       ${data.denominator ?? 1},
-      ${data.days_remaining ?? 0}
+      ${data.days_remaining ?? 0},
+      ${data.url ?? null}
     )
     RETURNING *
   `
@@ -328,6 +332,10 @@ export async function updateImportantTask(
   if (data.days_remaining !== undefined) {
     updates.push(`days_remaining = $${paramIndex++}`)
     values.push(data.days_remaining)
+  }
+  if (data.url !== undefined) {
+    updates.push(`url = $${paramIndex++}`)
+    values.push(data.url)
   }
 
   if (updates.length === 0) return null
