@@ -197,21 +197,102 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   const handleLinkModalSave = async () => {
     if (!linkModalState.isOpen) return
-    const trimmedUrl = linkModalState.url.trim()
-    const payloadUrl = trimmedUrl === "" ? null : trimmedUrl
-    const { tableIndex, taskId } = linkModalState
-    const numericId = Number(taskId)
 
-    if (!Number.isFinite(numericId)) {
-      console.error(
-        "Error updating important task link: invalid task id",
-        taskId,
-      )
-      showToast("No se pudo guardar en el servidor", "error")
+    const { tableIndex, taskId } = linkModalState
+    const targetTable = tables[tableIndex]
+    if (!targetTable || targetTable.title !== "Importantes") {
+      showToast("No se pudo guardar", "error")
       return
     }
 
+    const targetTask = targetTable.tasks.find((task) => task.id === taskId)
+    if (!targetTask) {
+      showToast("No se encontró la tarea", "error")
+      return
+    }
+
+    const trimmedUrl = linkModalState.url.trim()
+    const sanitizedUrl = trimmedUrl === "" ? undefined : trimmedUrl
+    const payloadUrl = sanitizedUrl ?? null
+    const numericId = Number(taskId)
+
+    const readErrorMessage = async (response: Response) => {
+      try {
+        const data = (await response.json()) as { error?: unknown }
+        if (data && typeof data.error === "string" && data.error.trim() !== "") {
+          return data.error.trim()
+        }
+      } catch {
+        // Ignore JSON parse errors from error responses
+      }
+      return undefined
+    }
+
+    const createTaskOnServer = async () => {
+      const daysRemaining =
+        typeof targetTask.days === "number"
+          ? targetTask.days
+          : Math.max(targetTask.denominator - targetTask.numerator, 0)
+
+      const createResponse = await fetch("/api/important", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: targetTask.text,
+          numerator: targetTask.numerator,
+          denominator: targetTask.denominator,
+          days_remaining: daysRemaining,
+          url: payloadUrl,
+        }),
+      })
+
+      if (!createResponse.ok) {
+        const message = await readErrorMessage(createResponse)
+        throw new Error(
+          message
+            ? `Failed to create important task: ${message}`
+            : `Failed to create important task: ${createResponse.status}`,
+        )
+      }
+
+      const created = (await createResponse.json()) as
+        | { id?: number; url?: string | null }
+        | null
+
+      if (!created || typeof created.id !== "number") {
+        throw new Error("Server did not return a created task")
+      }
+
+      const createdTaskId = String(created.id)
+      const createdUrl =
+        typeof created.url === "string" && created.url.trim() !== ""
+          ? created.url.trim()
+          : sanitizedUrl
+
+      setTables((prev) =>
+        prev.map((table, index) => {
+          if (index !== tableIndex) return table
+          return {
+            ...table,
+            tasks: table.tasks.map((task) =>
+              task.id === taskId
+                ? { ...task, id: createdTaskId, url: createdUrl }
+                : task,
+            ),
+          }
+        }),
+      )
+
+      showToast("Link guardado")
+      setLinkModalState({ isOpen: false })
+    }
+
     try {
+      if (!Number.isFinite(numericId)) {
+        await createTaskOnServer()
+        return
+      }
+
       const response = await fetch("/api/important", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -220,8 +301,19 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           url: payloadUrl,
         }),
       })
+
       if (!response.ok) {
-        throw new Error(`Failed to save link: ${response.status}`)
+        if (response.status === 400 || response.status === 404) {
+          await createTaskOnServer()
+          return
+        }
+
+        const message = await readErrorMessage(response)
+        throw new Error(
+          message
+            ? `Failed to save link: ${message}`
+            : `Failed to save link: ${response.status}`,
+        )
       }
 
       const updated = (await response.json()) as
@@ -231,7 +323,6 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       if (
         !updated ||
         typeof updated !== "object" ||
-        "error" in updated ||
         typeof updated.id !== "number"
       ) {
         throw new Error("Server did not return an updated task")
@@ -239,10 +330,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
       const updatedTask = updated as { id: number; url?: string | null }
       const serverTaskId = String(updatedTask.id)
-      const sanitizedUrl =
+      const serverUrl =
         typeof updatedTask.url === "string" && updatedTask.url.trim() !== ""
           ? updatedTask.url.trim()
-          : undefined
+          : sanitizedUrl
 
       setTables((prev) =>
         prev.map((table, index) => {
@@ -251,7 +342,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             ...table,
             tasks: table.tasks.map((task) =>
               task.id === taskId || task.id === serverTaskId
-                ? { ...task, id: serverTaskId, url: sanitizedUrl }
+                ? { ...task, id: serverTaskId, url: serverUrl }
                 : task,
             ),
           }
