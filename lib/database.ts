@@ -33,6 +33,11 @@ function canonicalSubjectName(raw: string): string {
   return raw
 }
 
+type PgError = Error & { code?: string }
+
+const isPgError = (error: unknown): error is PgError =>
+  typeof error === "object" && error !== null && "code" in error
+
 async function ensureImportantTasksTable() {
   const sql = getSql()
   await sql`
@@ -47,7 +52,30 @@ async function ensureImportantTasksTable() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `
-  await sql`ALTER TABLE important_tasks ADD COLUMN IF NOT EXISTS url TEXT`
+  try {
+    await sql`ALTER TABLE important_tasks ADD COLUMN IF NOT EXISTS url TEXT`
+  } catch (error) {
+    if (isPgError(error)) {
+      // Some Postgres setups (particularly older extensions or restricted roles)
+      // either don't support the IF NOT EXISTS clause yet or throw when the
+      // column is already present. Retry without the clause and ignore the
+      // duplicate column error so the schema self-heals without crashing the API.
+      if (error.code === "42601" /* syntax error */) {
+        try {
+          await sql`ALTER TABLE important_tasks ADD COLUMN url TEXT`
+        } catch (innerError) {
+          if (!isPgError(innerError) || innerError.code !== "42701") {
+            throw innerError
+          }
+        }
+        return
+      }
+      if (error.code === "42701" /* duplicate_column */) {
+        return
+      }
+    }
+    throw error
+  }
 }
 
 async function ensureSubjectsAndProgressTables() {

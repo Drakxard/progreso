@@ -200,27 +200,58 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const trimmedUrl = linkModalState.url.trim()
     const payloadUrl = trimmedUrl === "" ? null : trimmedUrl
     const { tableIndex, taskId } = linkModalState
+    const numericId = Number(taskId)
+
+    if (!Number.isFinite(numericId)) {
+      console.error(
+        "Error updating important task link: invalid task id",
+        taskId,
+      )
+      showToast("No se pudo guardar en el servidor", "error")
+      return
+    }
+
     try {
       const response = await fetch("/api/important", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: Number(taskId),
+          id: numericId,
           url: payloadUrl,
         }),
       })
       if (!response.ok) {
-        throw new Error("Failed to save link")
+        throw new Error(`Failed to save link: ${response.status}`)
       }
-      const sanitizedUrl = trimmedUrl === "" ? undefined : trimmedUrl
+
+      const updated = (await response.json()) as
+        | { error?: string; url?: string | null; id?: number }
+        | null
+
+      if (
+        !updated ||
+        typeof updated !== "object" ||
+        "error" in updated ||
+        typeof updated.id !== "number"
+      ) {
+        throw new Error("Server did not return an updated task")
+      }
+
+      const updatedTask = updated as { id: number; url?: string | null }
+      const serverTaskId = String(updatedTask.id)
+      const sanitizedUrl =
+        typeof updatedTask.url === "string" && updatedTask.url.trim() !== ""
+          ? updatedTask.url.trim()
+          : undefined
+
       setTables((prev) =>
         prev.map((table, index) => {
           if (index !== tableIndex) return table
           return {
             ...table,
             tasks: table.tasks.map((task) =>
-              task.id === taskId
-                ? { ...task, url: sanitizedUrl }
+              task.id === taskId || task.id === serverTaskId
+                ? { ...task, id: serverTaskId, url: sanitizedUrl }
                 : task,
             ),
           }
@@ -1799,7 +1830,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         {isClient &&
           linkModalState.isOpen &&
           createPortal(
-            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4">
               <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
                 <h2 className="text-lg font-semibold">Agregar link</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
