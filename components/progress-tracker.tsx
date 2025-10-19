@@ -200,32 +200,101 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const trimmedUrl = linkModalState.url.trim()
     const payloadUrl = trimmedUrl === "" ? null : trimmedUrl
     const { tableIndex, taskId } = linkModalState
+    const currentTable = tables[tableIndex]
+    const currentTask = currentTable?.tasks.find((item) => item.id === taskId)
+
+    if (!currentTask) {
+      showToast("No se encontró la tarea", "error")
+      return
+    }
+
+    type ImportantTaskResponse = {
+      id: number
+      text: string
+      numerator: number
+      denominator: number
+      days_remaining: number | null
+      url: string | null
+    }
+
     try {
-      const response = await fetch("/api/important", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: Number(taskId),
-          url: payloadUrl,
-        }),
-      })
+      const numericId = Number(taskId)
+      let response: Response
+      let persistedTask: ImportantTaskResponse | null = null
+
+      if (!Number.isFinite(numericId)) {
+        const denominator = Math.max(currentTask.denominator ?? 1, 1)
+        const daysRemaining =
+          typeof currentTask.days === "number"
+            ? currentTask.days
+            : Math.max(denominator - (currentTask.numerator ?? 0), 0)
+
+        response = await fetch("/api/important", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: currentTask.text,
+            numerator: currentTask.numerator,
+            denominator,
+            days_remaining: daysRemaining,
+            url: payloadUrl,
+          }),
+        })
+      } else {
+        response = await fetch("/api/important", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: numericId,
+            url: payloadUrl,
+          }),
+        })
+      }
+
       if (!response.ok) {
         throw new Error("Failed to save link")
       }
+
+      try {
+        persistedTask = (await response.json()) as ImportantTaskResponse | null
+      } catch {
+        persistedTask = null
+      }
+
       const sanitizedUrl = trimmedUrl === "" ? undefined : trimmedUrl
       setTables((prev) =>
         prev.map((table, index) => {
           if (index !== tableIndex) return table
           return {
             ...table,
-            tasks: table.tasks.map((task) =>
-              task.id === taskId
-                ? { ...task, url: sanitizedUrl }
-                : task,
-            ),
+            tasks: table.tasks.map((task) => {
+              if (task.id !== taskId) {
+                return task
+              }
+
+              const persistedDenominator = persistedTask?.denominator ?? task.denominator
+              const persistedNumerator = persistedTask?.numerator ?? task.numerator
+              const persistedDays =
+                typeof persistedTask?.days_remaining === "number"
+                  ? persistedTask.days_remaining
+                  : task.days
+
+              return {
+                ...task,
+                id:
+                  persistedTask && typeof persistedTask.id === "number"
+                    ? String(persistedTask.id)
+                    : task.id,
+                denominator: persistedDenominator,
+                numerator: persistedNumerator,
+                days: persistedDays,
+                url: sanitizedUrl,
+              }
+            }),
           }
         }),
       )
+
       showToast("Link guardado")
       setLinkModalState({ isOpen: false })
     } catch (error) {
@@ -1799,7 +1868,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
         {isClient &&
           linkModalState.isOpen &&
           createPortal(
-            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4">
               <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
                 <h2 className="text-lg font-semibold">Agregar link</h2>
                 <p className="mt-1 text-sm text-muted-foreground">

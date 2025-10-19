@@ -32,7 +32,14 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   try {
     const { id, ...data } = await request.json()
-    const task = await updateImportantTask(id, data)
+    const numericId = Number(id)
+    if (!Number.isFinite(numericId)) {
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 })
+    }
+    const task = await updateImportantTask(numericId, data)
+    if (!task) {
+      return NextResponse.json({ error: "Task not found" }, { status: 404 })
+    }
     return NextResponse.json(task)
   } catch (error) {
     console.error("Error updating important task:", error)
