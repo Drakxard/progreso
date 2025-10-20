@@ -162,6 +162,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     setIsClient(true)
   }, [])
 
+  const openTaskUrl = useCallback((url: string) => {
+    if (!url) return
+    window.open(url, "_blank", "noopener,noreferrer")
+  }, [])
+
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
     window.setTimeout(() => setToast(null), 2000)
@@ -1553,12 +1558,30 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const current = eventTasks[eventIndex]
     const { task, tableTitle, daysRemaining } = current
     const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
+    const eventTaskUrl = task.url?.trim()
 
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div
-          className="relative overflow-hidden bg-card border rounded-lg shadow-sm w-full max-w-md"
+          className={`relative overflow-hidden bg-card border rounded-lg shadow-sm w-full max-w-md ${
+            eventTaskUrl
+              ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-blue-500"
+              : ""
+          }`}
           style={{ transform: `scale(${eventZoom})`, transformOrigin: "center" }}
+          onClick={() => {
+            if (!eventTaskUrl) return
+            openTaskUrl(eventTaskUrl)
+          }}
+          onKeyDown={(event) => {
+            if (!eventTaskUrl) return
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault()
+              openTaskUrl(eventTaskUrl)
+            }
+          }}
+          role={eventTaskUrl ? "link" : undefined}
+          tabIndex={eventTaskUrl ? 0 : undefined}
         >
           <div
             className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
@@ -1637,16 +1660,36 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             const isHovered = hoveredTaskId === task.id
             const missingPdfs = calculatePdfsNeeded(task)
 
+            const taskUrl = task.url?.trim()
+
             return (
               <div
                 key={task.id}
-                className="relative overflow-hidden bg-card border rounded-lg shadow-sm"
+                className={`relative overflow-hidden bg-card border rounded-lg shadow-sm ${
+                  taskUrl
+                    ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-blue-500"
+                    : ""
+                }`}
                 onMouseEnter={() => setHoveredTaskId(task.id)}
                 onMouseLeave={() => setHoveredTaskId(null)}
+                onClick={() => {
+                  if (!taskUrl) return
+                  openTaskUrl(taskUrl)
+                }}
+                onKeyDown={(event) => {
+                  if (!taskUrl) return
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault()
+                    openTaskUrl(taskUrl)
+                  }
+                }}
+                role={taskUrl ? "link" : undefined}
+                tabIndex={taskUrl ? 0 : undefined}
               >
                 <div
                   className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg cursor-pointer`}
-                  onClick={() => {
+                  onClick={(event) => {
+                    event.stopPropagation()
                     const today = new Date()
                     today.setHours(0, 0, 0, 0)
                     let initialDate = new Date(
@@ -1730,26 +1773,30 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                       <Input
                         value={editText}
                         onChange={(e) => setEditText(e.target.value)}
+                        onClick={(event) => event.stopPropagation()}
                         onKeyDown={(e) => {
+                          e.stopPropagation()
                           if (e.key === "Enter") {
                             saveTask(task.id)
                           }
                         }}
                         onBlur={() => saveTask(task.id)}
                         placeholder="Escribe tu tarea..."
-                        className="bg-transparent border-none shadow-none focus-visible:ring-0"
+                        className="bg-transparent border-none shadow-none focus-visible:ring-0 px-2 py-1 h-8 w-auto max-w-full"
                         autoFocus
                       />
                     ) : (
-                      <div
-                        className="p-3 text-foreground cursor-pointer hover:text-muted-foreground transition-colors min-h-[2.5rem] flex items-center"
-                        onClick={() => {
+                      <button
+                        type="button"
+                        className="inline-flex max-w-full items-center px-2 py-1 text-left text-foreground cursor-text hover:text-muted-foreground transition-colors rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-blue-500"
+                        onClick={(event) => {
+                          event.stopPropagation()
                           setEditingId(task.id)
                           setEditText(task.text)
                         }}
                       >
-                        {task.text || "Haz clic para escribir..."}
-                      </div>
+                        <span className="truncate">{task.text || "Haz clic para escribir..."}</span>
+                      </button>
                     )}
                   </div>
 
@@ -1765,7 +1812,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                       variant="ghost"
                       size="icon"
                       className="ml-2 bg-transparent"
-                      onClick={() => removeImportantTask(task.id)}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        removeImportantTask(task.id)
+                      }}
                     >
                       <X className="h-4 w-4" />
                     </Button>
@@ -1777,7 +1827,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                     <span
                       key={index}
                       className="bg-green-500 text-white text-xs px-2 py-1 rounded cursor-pointer"
-                      onClick={() => removeTopic(task.id, index)}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        removeTopic(task.id, index)
+                      }}
                     >
                       {topic}
                     </span>
@@ -1788,11 +1841,13 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                       setTopicInputs((prev) => ({ ...prev, [task.id]: e.target.value }))
                     }
                     onKeyDown={(e) => {
+                      e.stopPropagation()
                       if (e.key === "Enter") {
                         addTopic(task.id, topicInputs[task.id] || "")
                         setTopicInputs((prev) => ({ ...prev, [task.id]: "" }))
                       }
                     }}
+                    onClick={(event) => event.stopPropagation()}
                     placeholder="Agregar tema..."
                     className="w-32 h-7 bg-white/80 backdrop-blur-sm text-xs"
                   />
