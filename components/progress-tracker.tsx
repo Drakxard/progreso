@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { createPortal } from "react-dom"
-import type { MouseEvent } from "react"
+import type { MouseEvent, KeyboardEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChevronLeft, ChevronRight, Flame, Sun, TreePine, X } from "lucide-react"
@@ -38,6 +38,13 @@ const computeDaysUntil = (targetDate: Date) => {
   const normalizedSelected = normalizeDate(targetDate)
   const diffMs = normalizedSelected.getTime() - today.getTime()
   return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
+}
+
+const normalizeUrlForOpen = (url?: string) => {
+  if (!url) return ""
+  const trimmed = url.trim()
+  if (!trimmed) return ""
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
 }
 
 const formatDateForStorage = (date: Date) => {
@@ -1553,12 +1560,41 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const current = eventTasks[eventIndex]
     const { task, tableTitle, daysRemaining } = current
     const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
+    const normalizedUrl = normalizeUrlForOpen(task.url)
+    const hasUrl = Boolean(normalizedUrl)
+
+    const activateEventLink = () => {
+      if (!hasUrl) return
+      window.open(normalizedUrl, "_blank", "noopener,noreferrer")
+    }
+
+    const handleCardClick = (event: MouseEvent<HTMLDivElement>) => {
+      if (!hasUrl) return
+      const target = event.target as Element
+      if (target.closest('[data-row-activation-stop="true"]')) {
+        return
+      }
+      event.preventDefault()
+      activateEventLink()
+    }
+
+    const handleCardKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+      if (!hasUrl) return
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault()
+        activateEventLink()
+      }
+    }
 
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div
-          className="relative overflow-hidden bg-card border rounded-lg shadow-sm w-full max-w-md"
+          className={`relative overflow-hidden bg-card border rounded-lg shadow-sm w-full max-w-md ${hasUrl ? "cursor-pointer" : ""}`}
           style={{ transform: `scale(${eventZoom})`, transformOrigin: "center" }}
+          onClick={handleCardClick}
+          onKeyDown={handleCardKeyDown}
+          role={hasUrl ? "link" : undefined}
+          tabIndex={hasUrl ? 0 : undefined}
         >
           <div
             className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
@@ -1636,16 +1672,50 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             const isBelowAverage = currentPercentage < averagePercentage
             const isHovered = hoveredTaskId === task.id
             const missingPdfs = calculatePdfsNeeded(task)
+            const normalizedUrl = normalizeUrlForOpen(task.url)
+            const hasUrl = Boolean(normalizedUrl)
+
+            const activateRowLink = () => {
+              if (!hasUrl) return
+              window.open(normalizedUrl, "_blank", "noopener,noreferrer")
+            }
+
+            const handleRowActivation = (event: MouseEvent<HTMLDivElement>) => {
+              if (!hasUrl || editingId === task.id) {
+                return
+              }
+              const target = event.target as Element
+              if (target.closest('[data-row-activation-stop="true"]')) {
+                return
+              }
+              event.preventDefault()
+              activateRowLink()
+            }
+
+            const handleRowKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+              if (!hasUrl || editingId === task.id) {
+                return
+              }
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault()
+                activateRowLink()
+              }
+            }
 
             return (
               <div
                 key={task.id}
-                className="relative overflow-hidden bg-card border rounded-lg shadow-sm"
+                className={`relative overflow-hidden bg-card border rounded-lg shadow-sm ${hasUrl ? "cursor-pointer" : ""}`}
                 onMouseEnter={() => setHoveredTaskId(task.id)}
                 onMouseLeave={() => setHoveredTaskId(null)}
+                onClick={handleRowActivation}
+                onKeyDown={handleRowKeyDown}
+                role={hasUrl ? "link" : undefined}
+                tabIndex={hasUrl ? 0 : undefined}
               >
                 <div
                   className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg cursor-pointer`}
+                  data-row-activation-stop="true"
                   onClick={() => {
                     const today = new Date()
                     today.setHours(0, 0, 0, 0)
@@ -1737,19 +1807,23 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                         }}
                         onBlur={() => saveTask(task.id)}
                         placeholder="Escribe tu tarea..."
-                        className="bg-transparent border-none shadow-none focus-visible:ring-0"
+                        className="bg-transparent border-none shadow-none focus-visible:ring-0 w-auto min-w-[8rem]"
+                        data-row-activation-stop="true"
                         autoFocus
                       />
                     ) : (
-                      <div
-                        className="p-3 text-foreground cursor-pointer hover:text-muted-foreground transition-colors min-h-[2.5rem] flex items-center"
-                        onClick={() => {
+                      <button
+                        type="button"
+                        className="inline-flex min-h-[2.5rem] items-center rounded px-2 text-left text-foreground transition-colors hover:text-muted-foreground"
+                        data-row-activation-stop="true"
+                        onClick={(event) => {
+                          event.preventDefault()
                           setEditingId(task.id)
                           setEditText(task.text)
                         }}
                       >
-                        {task.text || "Haz clic para escribir..."}
-                      </div>
+                        <span className="whitespace-pre-wrap">{task.text || "Haz clic para escribir..."}</span>
+                      </button>
                     )}
                   </div>
 
@@ -1765,6 +1839,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                       variant="ghost"
                       size="icon"
                       className="ml-2 bg-transparent"
+                      data-row-activation-stop="true"
                       onClick={() => removeImportantTask(task.id)}
                     >
                       <X className="h-4 w-4" />
@@ -1772,11 +1847,15 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                   )}
                 </div>
 
-                <div className="relative z-10 flex flex-wrap gap-2 px-3 pb-3">
+                <div
+                  className="relative z-10 flex flex-wrap gap-2 px-3 pb-3"
+                  data-row-activation-stop="true"
+                >
                   {(task.topics || []).map((topic, index) => (
                     <span
                       key={index}
                       className="bg-green-500 text-white text-xs px-2 py-1 rounded cursor-pointer"
+                      data-row-activation-stop="true"
                       onClick={() => removeTopic(task.id, index)}
                     >
                       {topic}
@@ -1795,6 +1874,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                     }}
                     placeholder="Agregar tema..."
                     className="w-32 h-7 bg-white/80 backdrop-blur-sm text-xs"
+                    data-row-activation-stop="true"
                   />
                 </div>
               </div>
