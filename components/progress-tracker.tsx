@@ -148,10 +148,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   })
   const [isLoading, setIsLoading] = useState(true)
   const [topicInputs, setTopicInputs] = useState<Record<string, string>>({})
+  const [taskLinkOverrides, setTaskLinkOverrides] = useState<Record<string, string>>({})
  
   const [isEventMode, setIsEventMode] = useState(false)
   const [eventTasks, setEventTasks] = useState<
-    { task: TaskItem; tableTitle: string; daysRemaining: number }[]
+    { task: TaskItem; tableTitle: string; tableIndex: number; daysRemaining: number }[]
   >([])
   const [eventIndex, setEventIndex] = useState(0)
   const [eventZoom, setEventZoom] = useState(2)
@@ -168,6 +169,81 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
   useEffect(() => {
     setIsClient(true)
   }, [])
+
+  useEffect(() => {
+    if (!isClient) {
+      return
+    }
+
+    try {
+      const stored = localStorage.getItem("taskLinks")
+      if (stored) {
+        const parsed = JSON.parse(stored) as Record<string, string>
+        setTaskLinkOverrides(parsed)
+      }
+    } catch (error) {
+      console.error("Error loading stored task links:", error)
+    }
+  }, [isClient])
+
+  useEffect(() => {
+    if (!isClient) {
+      return
+    }
+
+    try {
+      localStorage.setItem("taskLinks", JSON.stringify(taskLinkOverrides))
+    } catch (error) {
+      console.error("Error saving task links:", error)
+    }
+  }, [isClient, taskLinkOverrides])
+
+  const getSubjectResourceLink = useCallback((task: TaskItem, tableTitle: string) => {
+    const resources = SUBJECT_RESOURCE_LINKS[task.text]
+    if (!resources) return undefined
+    if (tableTitle === "Teoría") return resources.theory
+    if (tableTitle === "Práctica") return resources.practice
+    return undefined
+  }, [])
+
+  const getRawTaskUrl = useCallback(
+    (task: TaskItem, tableTitle: string) => {
+      const override = taskLinkOverrides[task.id]?.trim()
+      if (override) {
+        return override
+      }
+
+      if (typeof task.url === "string" && task.url.trim() !== "") {
+        return task.url.trim()
+      }
+
+      const fallback = getSubjectResourceLink(task, tableTitle)
+      return fallback ?? ""
+    },
+    [getSubjectResourceLink, taskLinkOverrides],
+  )
+
+  const getNormalizedTaskUrl = useCallback(
+    (task: TaskItem, tableTitle: string) => normalizeUrlForOpen(getRawTaskUrl(task, tableTitle)),
+    [getRawTaskUrl],
+  )
+
+  const openLinkModalForTask = useCallback(
+    (tableIndex: number, task: TaskItem) => {
+      setLinkModalState({
+        isOpen: true,
+        tableIndex,
+        taskId: task.id,
+        url:
+          taskLinkOverrides[task.id] ??
+          (typeof task.url === "string" && task.url.trim() !== ""
+            ? task.url.trim()
+            : ""),
+        label: task.text,
+      })
+    },
+    [taskLinkOverrides],
+  )
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
@@ -189,13 +265,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
     const table = tables[tableIndex]
     const task = table?.tasks.find((item) => item.id === taskId)
-    setLinkModalState({
-      isOpen: true,
-      tableIndex,
-      taskId,
-      url: task?.url ?? "",
-      label: task?.text ?? calendarEvent.label,
-    })
+    if (!task) {
+      return
+    }
+
+    openLinkModalForTask(tableIndex, task)
   }
 
   const handleLinkModalClose = () => {
@@ -207,6 +281,44 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     const trimmedUrl = linkModalState.url.trim()
     const payloadUrl = trimmedUrl === "" ? null : trimmedUrl
     const { tableIndex, taskId } = linkModalState
+    const table = tables[tableIndex]
+    if (!table) {
+      showToast("No se pudo guardar", "error")
+      return
+    }
+
+    if (table.title !== "Importantes") {
+      const sanitized = payloadUrl ?? undefined
+
+      setTaskLinkOverrides((prev) => {
+        const next = { ...prev }
+        if (sanitized) {
+          next[taskId] = sanitized
+        } else {
+          delete next[taskId]
+        }
+        return next
+      })
+
+      setTables((prev) =>
+        prev.map((currentTable, index) => {
+          if (index !== tableIndex) return currentTable
+          return {
+            ...currentTable,
+            tasks: currentTable.tasks.map((task) =>
+              task.id === taskId
+                ? { ...task, url: sanitized }
+                : task,
+            ),
+          }
+        }),
+      )
+
+      showToast(payloadUrl ? "Link guardado" : "Link eliminado")
+      setLinkModalState({ isOpen: false })
+      return
+    }
+
     const numericId = Number(taskId)
 
     if (!Number.isFinite(numericId)) {
@@ -252,11 +364,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           : undefined
 
       setTables((prev) =>
-        prev.map((table, index) => {
-          if (index !== tableIndex) return table
+        prev.map((currentTable, index) => {
+          if (index !== tableIndex) return currentTable
           return {
-            ...table,
-            tasks: table.tasks.map((task) =>
+            ...currentTable,
+            tasks: currentTable.tasks.map((task) =>
               task.id === taskId || task.id === serverTaskId
                 ? { ...task, id: serverTaskId, url: sanitizedUrl }
                 : task,
@@ -592,13 +704,16 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             : tTask
               ? Math.max(tTask.denominator - tTask.numerator, 0)
               : undefined
+        const theoryUrl = tTask
+          ? getNormalizedTaskUrl(tTask, "Teoría")
+          : normalizeUrlForOpen(SUBJECT_RESOURCE_LINKS[subject.name]?.theory)
         events.push({
           date: theoryDate,
           label: `${subject.name} teoría${
             remaining !== undefined ? ` (${remaining})` : ""
           }`,
           color: "bg-blue-500",
-          url: SUBJECT_RESOURCE_LINKS[subject.name]?.theory,
+          url: theoryUrl || undefined,
           source: { kind: "theory" },
         })
       }
@@ -611,13 +726,16 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             : pTask
               ? Math.max(pTask.denominator - pTask.numerator, 0)
               : undefined
+        const practiceUrl = pTask
+          ? getNormalizedTaskUrl(pTask, "Práctica")
+          : normalizeUrlForOpen(SUBJECT_RESOURCE_LINKS[subject.name]?.practice)
         events.push({
           date: practiceDate,
           label: `${subject.name} práctica${
             remaining !== undefined ? ` (${remaining})` : ""
           }`,
           color: "bg-green-500",
-          url: SUBJECT_RESOURCE_LINKS[subject.name]?.practice,
+          url: practiceUrl || undefined,
           source: { kind: "practice" },
         })
       }
@@ -628,15 +746,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       if (task.days !== undefined && task.days >= 0) {
         const due = new Date(today)
         due.setDate(due.getDate() + (task.days || 0))
-        const trimmedUrl =
-          typeof task.url === "string" && task.url.trim() !== ""
-            ? task.url
-            : undefined
+        const trimmedUrl = getNormalizedTaskUrl(task, "Importantes")
         events.push({
           date: due,
           label: `${task.text} (${task.days}d)`,
           color: "bg-orange-500",
-          url: trimmedUrl,
+          url: trimmedUrl || undefined,
           source: {
             kind: "important",
             taskId: task.id,
@@ -647,7 +762,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     })
 
     return events
-  }, [tables, subjectSchedules])
+  }, [tables, subjectSchedules, getNormalizedTaskUrl])
 
   const selectedCalendarTask = useMemo(() => {
     if (!calendarSelection) return null
@@ -952,10 +1067,11 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           setIsEventMode(false)
         } else {
           const tasks = tables
-            .flatMap((table) =>
+            .flatMap((table, tableIndex) =>
               table.tasks.map((task) => ({
                 task,
                 tableTitle: table.title,
+                tableIndex,
                 daysRemaining:
                   typeof task.days === "number"
                     ? task.days
@@ -1558,18 +1674,20 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
   if (isEventMode && eventTasks.length > 0) {
     const current = eventTasks[eventIndex]
-    const { task, tableTitle, daysRemaining } = current
+    const { task, tableTitle, tableIndex, daysRemaining } = current
     const { icon: IconComponent, bgColor, iconColor } = getIconAndColor(daysRemaining)
-    const normalizedUrl = normalizeUrlForOpen(task.url)
+    const normalizedUrl = getNormalizedTaskUrl(task, tableTitle)
     const hasUrl = Boolean(normalizedUrl)
 
     const activateEventLink = () => {
-      if (!hasUrl) return
+      if (!hasUrl) {
+        openLinkModalForTask(tableIndex, task)
+        return
+      }
       window.open(normalizedUrl, "_blank", "noopener,noreferrer")
     }
 
     const handleCardClick = (event: MouseEvent<HTMLDivElement>) => {
-      if (!hasUrl) return
       const target = event.target as Element
       if (target.closest('[data-row-activation-stop="true"]')) {
         return
@@ -1579,7 +1697,6 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     }
 
     const handleCardKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-      if (!hasUrl) return
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault()
         activateEventLink()
@@ -1589,12 +1706,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div
-          className={`relative overflow-hidden bg-card border rounded-lg shadow-sm w-full max-w-md ${hasUrl ? "cursor-pointer" : ""}`}
+          className={`relative overflow-hidden bg-card border rounded-lg shadow-sm w-full max-w-md cursor-pointer`}
           style={{ transform: `scale(${eventZoom})`, transformOrigin: "center" }}
           onClick={handleCardClick}
           onKeyDown={handleCardKeyDown}
-          role={hasUrl ? "link" : undefined}
-          tabIndex={hasUrl ? 0 : undefined}
+          role={hasUrl ? "link" : "button"}
+          tabIndex={0}
         >
           <div
             className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg`}
@@ -1672,16 +1789,19 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
             const isBelowAverage = currentPercentage < averagePercentage
             const isHovered = hoveredTaskId === task.id
             const missingPdfs = calculatePdfsNeeded(task)
-            const normalizedUrl = normalizeUrlForOpen(task.url)
+            const normalizedUrl = getNormalizedTaskUrl(task, currentTable.title)
             const hasUrl = Boolean(normalizedUrl)
 
-            const activateRowLink = () => {
-              if (!hasUrl) return
+            const activateRow = () => {
+              if (!hasUrl) {
+                openLinkModalForTask(currentTableIndex, task)
+                return
+              }
               window.open(normalizedUrl, "_blank", "noopener,noreferrer")
             }
 
             const handleRowActivation = (event: MouseEvent<HTMLDivElement>) => {
-              if (!hasUrl || editingId === task.id) {
+              if (editingId === task.id) {
                 return
               }
               const target = event.target as Element
@@ -1689,29 +1809,29 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 return
               }
               event.preventDefault()
-              activateRowLink()
+              activateRow()
             }
 
             const handleRowKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-              if (!hasUrl || editingId === task.id) {
+              if (editingId === task.id) {
                 return
               }
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault()
-                activateRowLink()
+                activateRow()
               }
             }
 
             return (
               <div
                 key={task.id}
-                className={`relative overflow-hidden bg-card border rounded-lg shadow-sm ${hasUrl ? "cursor-pointer" : ""}`}
+                className="relative overflow-hidden bg-card border rounded-lg shadow-sm cursor-pointer"
                 onMouseEnter={() => setHoveredTaskId(task.id)}
                 onMouseLeave={() => setHoveredTaskId(null)}
                 onClick={handleRowActivation}
                 onKeyDown={handleRowKeyDown}
-                role={hasUrl ? "link" : undefined}
-                tabIndex={hasUrl ? 0 : undefined}
+                role={hasUrl ? "link" : "button"}
+                tabIndex={editingId === task.id ? -1 : 0}
               >
                 <div
                   className={`absolute top-0 right-0 z-20 flex items-center gap-1 bg-gradient-to-r ${bgColor} text-white px-2 py-1 rounded-bl-lg text-xs font-bold shadow-lg cursor-pointer`}
