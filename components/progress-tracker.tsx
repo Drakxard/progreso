@@ -915,9 +915,10 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
                 const savedProgress = progressMap.get(`${task.text}-${tableType}`)
 
                 if (savedProgress) {
+                  const baseDenominator = Math.max(task.denominator ?? 0, 7)
                   const denominator = Math.max(
-                    savedProgress.total_pdfs ?? task.denominator ?? 0,
-                    1,
+                    savedProgress.total_pdfs ?? baseDenominator,
+                    baseDenominator,
                   )
                   const numerator = Math.min(
                     denominator,
@@ -939,17 +940,19 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           prev.map((subject) => {
             const theoryRecord = progressMap.get(`${subject.name}-theory`)
             const practiceRecord = progressMap.get(`${subject.name}-practice`)
+            const previousTheoryTotal = Math.max(subject.theoryTotal ?? 7, 7)
+            const previousPracticeTotal = Math.max(subject.practiceTotal ?? 7, 7)
 
             return {
               ...subject,
               theoryTotal:
                 theoryRecord && theoryRecord.total_pdfs
-                  ? Math.max(theoryRecord.total_pdfs, 1)
-                  : subject.theoryTotal ?? 7,
+                  ? Math.max(theoryRecord.total_pdfs, previousTheoryTotal)
+                  : previousTheoryTotal,
               practiceTotal:
                 practiceRecord && practiceRecord.total_pdfs
-                  ? Math.max(practiceRecord.total_pdfs, 1)
-                  : subject.practiceTotal ?? 7,
+                  ? Math.max(practiceRecord.total_pdfs, previousPracticeTotal)
+                  : previousPracticeTotal,
             }
           }),
         )
@@ -1219,7 +1222,7 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
     id: string,
     days: number,
     tableIndexOverride?: number,
-    options?: { eventDate?: Date },
+    _options?: { eventDate?: Date },
   ) => {
     const targetTableIndex =
       tableIndexOverride !== undefined ? tableIndexOverride : currentTableIndex
@@ -1232,8 +1235,6 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
 
     const task = targetTable.tasks[taskIndex]
     const normalizedDays = Math.max(0, days)
-    const isCalendarUpdate = Boolean(options?.eventDate)
-
     if (targetTable.title === "Importantes") {
       const newDenominator = Math.max(task.denominator, normalizedDays, 1)
       const newNumerator = Math.min(
@@ -1268,9 +1269,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
       return
     }
 
-    const newDenominator = isCalendarUpdate
-      ? Math.max(normalizedDays, 1)
-      : Math.max(task.denominator, normalizedDays, 1)
+    const baseDenominator = Math.max(task.denominator ?? 0, 1)
+    const newDenominator = Math.max(baseDenominator, normalizedDays, 1)
     const newNumerator = Math.min(
       newDenominator,
       Math.max(newDenominator - normalizedDays, 0),
@@ -1326,6 +1326,8 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
           if (subject.name !== task.text) {
             return subject
           }
+          const previousTheoryTotal = Math.max(subject.theoryTotal ?? 7, 7)
+          const previousPracticeTotal = Math.max(subject.practiceTotal ?? 7, 7)
           return {
             ...subject,
             theoryDate:
@@ -1334,12 +1336,12 @@ export default function ProgressTracker({ initialData }: ProgressTrackerProps) {
               tableTitle === "Práctica" ? storedDate : subject.practiceDate,
             theoryTotal:
               tableTitle === "Teoría"
-                ? Math.max(diffDays, 1)
-                : subject.theoryTotal ?? 7,
+                ? Math.max(previousTheoryTotal, diffDays, 7)
+                : previousTheoryTotal,
             practiceTotal:
               tableTitle === "Práctica"
-                ? Math.max(diffDays, 1)
-                : subject.practiceTotal ?? 7,
+                ? Math.max(previousPracticeTotal, diffDays, 7)
+                : previousPracticeTotal,
           }
         }),
       )
